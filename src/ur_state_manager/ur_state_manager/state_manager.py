@@ -73,9 +73,9 @@ def _safety_mode_name(mode):
     return SAFETY_MODE_NAMES.get(mode, f"UNKNOWN({mode})")
 
 
-class ArmManager(Node):
+class StateManager(Node):
     def __init__(self):
-        super().__init__("ur_arm_manager")
+        super().__init__("ur_state_manager")
 
         # ---- Parameter ----------------------------------------------------
         ns = self.declare_parameter("dashboard_ns",
@@ -132,7 +132,7 @@ class ArmManager(Node):
         self.create_service(Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg)
 
         self.get_logger().info(
-            f"ur_arm_manager bereit. dashboard_ns={ns} io_status_ns={io_ns} "
+            f"ur_state_manager bereit. dashboard_ns={ns} io_status_ns={io_ns} "
             f"headless_mode={self.headless_mode}")
 
     # ======================================================================
@@ -368,7 +368,7 @@ class ArmManager(Node):
 
 def main():
     rclpy.init()
-    node = ArmManager()
+    node = StateManager()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

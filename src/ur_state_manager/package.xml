@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>ur_arm_manager</name>
+  <name>ur_state_manager</name>
   <version>0.0.0</version>
-  <description>Verwaltet einen verbundenen UR5 (CB3): power_on/brake_release zum
-    Einsatzbereitmachen und Recovery nach Safety-Violation, ueber den
+  <description>Verwaltet den Zustand eines verbundenen UR5 (CB3): power_on/brake_release
+    zum Einsatzbereitmachen und Recovery nach Safety-Violation, ueber den
     ur_robot_driver Dashboard-Client.</description>
   <maintainer email="hannes.voss@haw-hamburg.de">Hannes Voss</maintainer>
   <license>TODO: License declaration</license>

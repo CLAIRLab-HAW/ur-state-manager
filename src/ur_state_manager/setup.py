@@ -2,7 +2,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-package_name = "ur_arm_manager"
+package_name = "ur_state_manager"
 
 setup(
     name=package_name,
@@ -18,12 +18,12 @@ setup(
     zip_safe=True,
     maintainer="Hannes Voss",
     maintainer_email="hannes.voss@haw-hamburg.de",
-    description="UR5-Manager: einsatzbereit machen + Recovery nach Safety-Violation.",
+    description="UR5-State-Manager: einsatzbereit machen + Recovery nach Safety-Violation.",
     license="TODO: License declaration",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "arm_manager = ur_arm_manager.arm_manager:main",
+            "state_manager = ur_state_manager.state_manager:main",
         ],
     },
 )

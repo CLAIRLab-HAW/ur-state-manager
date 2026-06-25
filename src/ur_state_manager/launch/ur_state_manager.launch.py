@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Startet den ur_arm_manager-Node fuer die a200-0553.
+"""Startet den ur_state_manager-Node fuer die a200-0553.
 
 Optional wird der ur_robot_driver Dashboard-Client mitgestartet (Default: an),
 weil Clearpath ihn im headless-Setup nicht mitbringt - ohne ihn gibt es keine
@@ -60,9 +60,9 @@ def generate_launch_description():
         ),
 
         Node(
-            package="ur_arm_manager",
-            executable="arm_manager",
-            name="ur_arm_manager",
+            package="ur_state_manager",
+            executable="state_manager",
+            name="ur_state_manager",
             output="screen",
             parameters=[{
                 "dashboard_ns": dashboard_ns,

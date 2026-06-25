@@ -1,4 +1,4 @@
-# ur_arm_manager
+# ur_state_manager
 
 ROS2-Node, der einen **bereits verbundenen** UR5 (CB3) auf der `a200-0553` verwaltet –
 über den `ur_robot_driver` **Dashboard-Client** (TCP 29999 auf der UR-Control-Box) und
@@ -22,7 +22,7 @@ Er deckt zwei Aufgaben ab:
 | `~/ensure_ready` | Liegt eine Safety-Violation vor → `recover`, sonst `prepare`. Der bequeme „mach den Arm einfach bereit"-Aufruf. |
 | `~/power_off` | Arm sicher abschalten (`power_off`). |
 
-Voller Servicename = Node-Name vorangestellt, z. B. `/ur_arm_manager/prepare`.
+Voller Servicename = Node-Name vorangestellt, z. B. `/ur_state_manager/prepare`.
 
 ### Recovery-Logik (`~/recover`)
 
@@ -74,27 +74,31 @@ Voller Servicename = Node-Name vorangestellt, z. B. `/ur_arm_manager/prepare`.
 
 ## Build
 
-In einem ROS2-Workspace (oder diesen `src`-Baum in einen vorhandenen Workspace einbinden):
-
 ```bash
-cd ur-arm-manager
-colcon build --packages-select ur_arm_manager
+git clone https://github.com/CLAIRLab-HAW/ur-state-manager.git
+cd ur-state-manager
+colcon build --packages-select ur_state_manager
 source install/setup.bash
 ```
 
 `ur_dashboard_msgs` kommt mit dem `ur_robot_driver`-Stack (auf der a200-0553 vorhanden).
 
+> Auf a200-0553 erledigt das der `husky-custom-setup`-Installer optional automatisch:
+> er klont+baut dieses Repo und installiert `ur-state-manager.service` (startet den
+> Manager beim Boot, `start_dashboard_client:=false`, da der `dashboard_client` über
+> `ur-dashboard.service` läuft).
+
 ## Starten
 
 ```bash
-# startet dashboard_client (robot_ip 192.168.131.40) + ur_arm_manager
-ros2 launch ur_arm_manager ur_arm_manager.launch.py
+# startet dashboard_client (robot_ip 192.168.131.40) + ur_state_manager
+ros2 launch ur_state_manager ur_state_manager.launch.py
 
 # falls der dashboard_client schon anderweitig laeuft:
-ros2 launch ur_arm_manager ur_arm_manager.launch.py start_dashboard_client:=false
+ros2 launch ur_state_manager ur_state_manager.launch.py start_dashboard_client:=false
 
 # oder nur den Manager direkt:
-ros2 run ur_arm_manager arm_manager --ros-args \
+ros2 run ur_state_manager state_manager --ros-args \
   -p dashboard_ns:=/a200_0553/manipulators/dashboard_client \
   -p io_status_ns:=/a200_0553/manipulators/io_and_status_controller
 ```
@@ -103,16 +107,16 @@ ros2 run ur_arm_manager arm_manager --ros-args \
 
 ```bash
 # Arm einsatzbereit machen (power on + brakes lösen + ExternalControl)
-ros2 service call /ur_arm_manager/prepare std_srvs/srv/Trigger
+ros2 service call /ur_state_manager/prepare std_srvs/srv/Trigger
 
 # Nach Kollision / Protective-Stop wieder bereit machen
-ros2 service call /ur_arm_manager/recover std_srvs/srv/Trigger
+ros2 service call /ur_state_manager/recover std_srvs/srv/Trigger
 
 # „mach einfach bereit, egal welcher Zustand"
-ros2 service call /ur_arm_manager/ensure_ready std_srvs/srv/Trigger
+ros2 service call /ur_state_manager/ensure_ready std_srvs/srv/Trigger
 
 # sicher abschalten
-ros2 service call /ur_arm_manager/power_off std_srvs/srv/Trigger
+ros2 service call /ur_state_manager/power_off std_srvs/srv/Trigger
 ```
 
 Jede Antwort liefert `success` (bool) und `message` (string) mit Klartext-Status.
