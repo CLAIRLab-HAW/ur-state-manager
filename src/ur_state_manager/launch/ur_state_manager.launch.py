@@ -63,6 +63,7 @@ def generate_launch_description():
             package="ur_state_manager",
             executable="state_manager",
             name="ur_state_manager",
+            namespace=NS,
             output="screen",
             parameters=[{
                 "dashboard_ns": dashboard_ns,

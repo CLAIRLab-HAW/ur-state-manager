@@ -22,7 +22,7 @@ Er deckt zwei Aufgaben ab:
 | `~/ensure_ready` | Liegt eine Safety-Violation vor → `recover`, sonst `prepare`. Der bequeme „mach den Arm einfach bereit"-Aufruf. |
 | `~/power_off` | Arm sicher abschalten (`power_off`). |
 
-Voller Servicename = Node-Name vorangestellt, z. B. `/ur_state_manager/prepare`.
+Voller Servicename = Node-Name vorangestellt, z. B. `/a200_0553/manipulators/ur_state_manager/prepare`.
 
 ### Recovery-Logik (`~/recover`)
 
@@ -97,8 +97,9 @@ ros2 launch ur_state_manager ur_state_manager.launch.py
 # falls der dashboard_client schon anderweitig laeuft:
 ros2 launch ur_state_manager ur_state_manager.launch.py start_dashboard_client:=false
 
-# oder nur den Manager direkt:
+# oder nur den Manager direkt (Namespace setzen, sonst landet er unter /ur_state_manager):
 ros2 run ur_state_manager state_manager --ros-args \
+  -r __ns:=/a200_0553/manipulators \
   -p dashboard_ns:=/a200_0553/manipulators/dashboard_client \
   -p io_status_ns:=/a200_0553/manipulators/io_and_status_controller
 ```
@@ -107,16 +108,16 @@ ros2 run ur_state_manager state_manager --ros-args \
 
 ```bash
 # Arm einsatzbereit machen (power on + brakes lösen + ExternalControl)
-ros2 service call /ur_state_manager/prepare std_srvs/srv/Trigger
+ros2 service call /a200_0553/manipulators/ur_state_manager/prepare std_srvs/srv/Trigger
 
 # Nach Kollision / Protective-Stop wieder bereit machen
-ros2 service call /ur_state_manager/recover std_srvs/srv/Trigger
+ros2 service call /a200_0553/manipulators/ur_state_manager/recover std_srvs/srv/Trigger
 
 # „mach einfach bereit, egal welcher Zustand"
-ros2 service call /ur_state_manager/ensure_ready std_srvs/srv/Trigger
+ros2 service call /a200_0553/manipulators/ur_state_manager/ensure_ready std_srvs/srv/Trigger
 
 # sicher abschalten
-ros2 service call /ur_state_manager/power_off std_srvs/srv/Trigger
+ros2 service call /a200_0553/manipulators/ur_state_manager/power_off std_srvs/srv/Trigger
 ```
 
 Jede Antwort liefert `success` (bool) und `message` (string) mit Klartext-Status.
