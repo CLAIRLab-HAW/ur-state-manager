@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ur_arm_manager</name>
+  <version>0.0.0</version>
+  <description>Verwaltet einen verbundenen UR5 (CB3): power_on/brake_release zum
+    Einsatzbereitmachen und Recovery nach Safety-Violation, ueber den
+    ur_robot_driver Dashboard-Client.</description>
+  <maintainer email="hannes.voss@haw-hamburg.de">Hannes Voss</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>ur_dashboard_msgs</exec_depend>
+  <!-- liefert den dashboard_client-Node, den das Launch optional mitstartet -->
+  <exec_depend>ur_robot_driver</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
