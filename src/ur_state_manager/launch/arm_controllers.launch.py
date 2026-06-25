@@ -43,31 +43,36 @@ def generate_launch_description():
         [FindPackageShare("ur_state_manager"), "config", "extra_controllers.yaml"])
 
     # Broadcaster AKTIV laden (Typ via --param-file).
-    load_active = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            *BROADCASTERS,
-            "--param-file", extra_params,
-            "-c", CONTROLLER_MANAGER,
-            "--controller-manager-timeout", "60",
-        ],
-        output="screen",
-    )
+    load_active = [
+        Node(
+            package="controller_manager",
+            executable="spawner",
+            arguments=[
+                broadcaster_name,
+                "--param-file", extra_params,
+                "-c", CONTROLLER_MANAGER,
+                "--controller-manager-timeout", "60",
+            ],
+            output="screen",
+        ) for broadcaster_name in BROADCASTERS
+    ]
 
     # Command-Controller in einem Rutsch INAKTIV laden (Typ via --param-file).
-    load_inactive = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            *COMMAND_CONTROLLERS,
-            "--inactive",
-            "--param-file", extra_params,
-            "-c", CONTROLLER_MANAGER,
-            "--controller-manager-timeout", "60",
-        ],
-        output="screen",
-    )
+    load_inactive = [
+        Node(
+            package="controller_manager",
+            executable="spawner",
+            arguments=[
+                controller_name,
+                "--inactive",
+                "--param-file", extra_params,
+                "-c", CONTROLLER_MANAGER,
+                "--controller-manager-timeout", "60",
+            ],
+            output="screen",
+        ) for controller_name in COMMAND_CONTROLLERS
+    ]
+
 
     mode_manager = Node(
         package="ur_state_manager",
