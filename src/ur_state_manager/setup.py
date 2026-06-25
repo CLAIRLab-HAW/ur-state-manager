@@ -13,6 +13,7 @@ setup(
          ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/config", glob("config/*.yaml")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -24,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "state_manager = ur_state_manager.state_manager:main",
+            "controller_mode_manager = ur_state_manager.controller_mode_manager:main",
         ],
     },
 )

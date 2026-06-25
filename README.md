@@ -24,6 +24,48 @@ Er deckt zwei Aufgaben ab:
 
 Voller Servicename = Node-Name vorangestellt, z. B. `/a200_0553/manipulators/ur_state_manager/prepare`.
 
+## Controller pro Anwendungsfall umschalten (`controller_mode_manager`)
+
+Zweiter Node + Launch zum **Laufzeit-Umschalten der Arm-Controller**. Idee: EIN
+`controller_manager` hostet alle Controller; die sich gegenseitig ausschließenden
+**Command-Controller** liegen meist **inaktiv** und werden per `switch_controller`
+aktiviert. Der Basis-Satz (von Clearpath gespawnt: `joint_state_broadcaster`,
+`arm_0_joint_trajectory_controller`, `io_and_status_controller`) bleibt unangetastet.
+
+`arm_controllers.launch.py` lädt die Extra-Controller `--inactive` (aus
+`config/extra_controllers.yaml`) und startet den Mode-Manager:
+
+```bash
+ros2 launch ur_state_manager arm_controllers.launch.py
+```
+
+Modi (Default; `mode_names`/`mode_controllers`-Parameter überschreibbar) — je ein
+`std_srvs/Trigger`-Service:
+
+| Service | aktiviert | Zweck |
+|---|---|---|
+| `~/mode/trajectory` | `arm_0_joint_trajectory_controller` | MoveIt/Trajektorien (Default) |
+| `~/mode/freedrive` | `freedrive_mode_controller` | Hand-Führen / Trajektorien-Recording |
+| `~/mode/forward_position` | `forward_position_controller` | direkte Positions-Streams |
+| `~/mode/forward_velocity` | `forward_velocity_controller` | direkte Geschwindigkeits-Streams |
+| `~/mode/passthrough` | `passthrough_trajectory_controller` | Trajektorien-Streaming |
+| `~/release` | – | alle Command-Controller deaktivieren (Arm frei) |
+| `~/active` | – | aktiven Command-Controller melden |
+
+Ein Umschalten aktiviert den Zielcontroller und **deaktiviert** die anderen
+Command-Controller, die gerade aktiv sind (über `switch_controller`, `STRICT`).
+Zusätzlich lädt das Launch die Broadcaster `force_torque_sensor_broadcaster`,
+`tcp_pose_broadcaster`, `speed_scaling_state_broadcaster` **aktiv** (kollidieren
+nicht). Die Controller-Params in `config/extra_controllers.yaml` sind 1:1 aus
+`ur_robot_driver/config/ur_controllers.yaml` übernommen (tf_prefix `arm_0_`).
+
+```bash
+# z. B. zum Trajektorien-Recording in FreeDrive
+ros2 service call /a200_0553/manipulators/ur_controller_mode_manager/mode/freedrive std_srvs/srv/Trigger
+# ... aufzeichnen ... dann zurück:
+ros2 service call /a200_0553/manipulators/ur_controller_mode_manager/mode/trajectory std_srvs/srv/Trigger
+```
+
 ### Recovery-Logik (`~/recover`)
 
 | `safety_mode` | Behandlung |
