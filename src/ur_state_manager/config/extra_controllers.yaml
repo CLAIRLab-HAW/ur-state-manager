@@ -7,9 +7,11 @@
 #     aktiv kollidieren). Per ur_controller_mode_manager zur Laufzeit umschaltbar.
 #
 # Params 1:1 aus ur_robot_driver/config/ur_controllers.yaml uebernommen, mit
-# tf_prefix 'arm_0_' (statt $(var tf_prefix)). Der File ist dem spawner per
-# --param-file uebergeben -> auf den voll qualifizierten controller_manager-Namen
-# gescoped (Typen unter dem CM, Controller-Params als eigene Top-Level-Nodes).
+# tf_prefix 'arm_0_' (statt $(var tf_prefix)). Der File wird dem spawner per
+# --param-file uebergeben. WICHTIG (Jazzy-Format): jeder Controller als
+# '/**/<name>'-Wildcard-Node, und der 'type' steht MIT in dessen 'ros__parameters'
+# (NICHT als separate controller_manager-Section mit FQN -> so zieht der Spawner
+# Typ + Params korrekt; FQN/CM-Section wurde NICHT uebernommen -> "Failed loading").
 
 # ---- Broadcaster-Params & Types --------------------------------------------
 /**/force_torque_sensor_broadcaster:
