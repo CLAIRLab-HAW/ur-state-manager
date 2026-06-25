@@ -82,4 +82,4 @@ def generate_launch_description():
         output="screen",
     )
 
-    return LaunchDescription([load_active, load_inactive, mode_manager])
+    return LaunchDescription([*load_active, *load_inactive, mode_manager])
