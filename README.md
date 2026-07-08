@@ -29,7 +29,7 @@ Jeder Service übersetzt in ein `SetMode`-Goal an den `robot_state_helper`:
 
 | Service | Delegiert an `SetMode` | Wirkung |
 |---|---|---|
-| `~/prepare` | `{RUNNING, play_program}` | Hochfahren bis `RUNNING` + ExternalControl. `robot_state_helper` überspringt bereits erledigte Schritte selbst. |
+| `~/prepare` | `{RUNNING, play_program}` | Hochfahren bis `RUNNING` + ExternalControl. **Idempotent:** ist der Arm schon `RUNNING` + Safety `NORMAL`/`REDUCED` + ExternalControl aktiv, meldet `prepare` sofort `success=True` **ohne** `robot_state_helper` (Demo läuft auch beim wiederholten Start durch). Sonst delegiert es; `robot_state_helper` überspringt erledigte Schritte selbst. |
 | `~/recover` | `[pstop-wait] {RUNNING, stop_program, play_program}` | Nach Safety-Violation: Programm stoppen, `RUNNING` wiederherstellen, neu starten (UR-Empfehlung nach einem Stop). Safety-Handling macht der Helper. |
 | `~/ensure_ready` | wie `recover` | `SetMode` macht ohnehin „whatever it takes" → identisch zu `recover` (inkl. CB3-Wartezeit). |
 | `~/power_off` | `{POWER_OFF, stop_program}` | Arm sicher abschalten. |
@@ -135,7 +135,8 @@ Das komplette Safety-Handling steckt jetzt im `robot_state_helper` (aufgerufen a
 | Parameter | Default | Bedeutung |
 |---|---|---|
 | `set_mode_action` | `/a200_0553/manipulators/ur_robot_state_helper/set_mode` | Action-Name des `robot_state_helper`. |
-| `dashboard_ns` | `/a200_0553/manipulators/dashboard_client` | Für `get_safety_mode` (CB3-Wartezeit). |
+| `dashboard_ns` | `/a200_0553/manipulators/dashboard_client` | Für `get_safety_mode` + `get_robot_mode` (CB3-Wartezeit / idempotenter `prepare`-Vorcheck). |
+| `io_status_ns` | `/a200_0553/manipulators/io_and_status_controller` | Für `robot_program_running` (ExternalControl aktiv? → idempotenter `prepare`-Vorcheck). |
 | `service_timeout` | `10.0` | Timeout beim Warten auf Action-Server/Service (s). |
 | `action_timeout` | `120.0` | Max. Wartezeit auf das `SetMode`-Ergebnis (Mode-Transition). |
 | `protective_stop_wait` | `6.0` | Wartezeit vor dem `SetMode`-Goal bei `PROTECTIVE_STOP` (CB3 ≥ 5 s). |

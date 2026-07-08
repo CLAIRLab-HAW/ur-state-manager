@@ -23,7 +23,10 @@ liest 'recover'/'ensure_ready' vorher den safety_mode (Dashboard-Client) und
 wartet ggf. kurz, BEVOR das SetMode-Goal (das intern sofort unlockt) rausgeht.
 
 Mapping der Trigger-Services auf SetMode-Goals:
-  ~/prepare       SetMode{RUNNING,   stop_program=false, play_program=true}
+  ~/prepare       [idempotent] SetMode{RUNNING, stop_program=false, play_program=true}
+                  Vorcheck: ist der Arm schon RUNNING + ExternalControl aktiv +
+                  Safety NORMAL/REDUCED, gibt es nichts zu tun -> success=True OHNE
+                  robot_state_helper (wichtig fuers wiederholte Starten der Demo).
   ~/recover       [pstop-wait] SetMode{RUNNING, stop_program=true, play_program=true}
   ~/ensure_ready  wie recover (SetMode macht ohnehin "whatever it takes")
   ~/power_off     SetMode{POWER_OFF, stop_program=true,  play_program=false}
@@ -39,10 +42,11 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 from ur_dashboard_msgs.action import SetMode
 from ur_dashboard_msgs.msg import RobotMode, SafetyMode
-from ur_dashboard_msgs.srv import GetSafetyMode
+from ur_dashboard_msgs.srv import GetRobotMode, GetSafetyMode
 
 
 # Menschenlesbare Namen fuer Logausgaben (Konstanten kommen aus den .msg).
@@ -92,10 +96,16 @@ class StateManager(Node):
         self.set_mode_action = self.declare_parameter(
             "set_mode_action",
             "/a200_0553/manipulators/ur_robot_state_helper/set_mode").value
-        # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig.
+        # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig;
+        # zusaetzlich fuer den idempotenten prepare-Vorcheck (get_robot_mode).
         dashboard_ns = self.declare_parameter(
             "dashboard_ns",
             "/a200_0553/manipulators/dashboard_client").value.rstrip("/")
+        # io_and_status_controller: liefert robot_program_running (ExternalControl aktiv?)
+        # fuer den idempotenten prepare-Vorcheck.
+        io_status_ns = self.declare_parameter(
+            "io_status_ns",
+            "/a200_0553/manipulators/io_and_status_controller").value.rstrip("/")
 
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
         # Wie lange ein Mode-Uebergang (z.B. POWER_OFF -> RUNNING) dauern darf.
@@ -112,6 +122,16 @@ class StateManager(Node):
             self, SetMode, self.set_mode_action, callback_group=self.cbg)
         self.cli_get_safety_mode = self.create_client(
             GetSafetyMode, f"{dashboard_ns}/get_safety_mode", callback_group=self.cbg)
+        self.cli_get_robot_mode = self.create_client(
+            GetRobotMode, f"{dashboard_ns}/get_robot_mode", callback_group=self.cbg)
+
+        # ExternalControl-Status (True = ROS-Programm laeuft) fuer den idempotenten
+        # prepare-Vorcheck. Wird periodisch vom io_and_status_controller gepublisht;
+        # None = noch nichts empfangen -> Vorcheck greift nicht (sicherer Default).
+        self._program_running = None
+        self.create_subscription(
+            Bool, f"{io_status_ns}/robot_program_running",
+            self._on_program_running, 1, callback_group=self.cbg)
 
         # ---- Eigene Services (unveraendert zur alten API) -----------------
         self._lock = threading.Lock()  # nie zwei Ablaeufe gleichzeitig
@@ -143,6 +163,9 @@ class StateManager(Node):
             f"SetMode-Feedback: robot_mode={_robot_mode_name(fb.current_robot_mode)} "
             f"safety_mode={_safety_mode_name(fb.current_safety_mode)}")
 
+    def _on_program_running(self, msg: Bool):
+        self._program_running = bool(msg.data)
+
     def _get_safety_mode(self):
         """safety_mode ueber den Dashboard-Client lesen. -> mode | None."""
         if not self.cli_get_safety_mode.wait_for_service(timeout_sec=self.service_timeout):
@@ -151,6 +174,36 @@ class StateManager(Node):
         if not self._spin_future(fut, self.service_timeout):
             return None
         return fut.result().safety_mode.mode
+
+    def _get_robot_mode(self):
+        """robot_mode ueber den Dashboard-Client lesen. -> mode | None."""
+        if not self.cli_get_robot_mode.wait_for_service(timeout_sec=self.service_timeout):
+            return None
+        fut = self.cli_get_robot_mode.call_async(GetRobotMode.Request())
+        if not self._spin_future(fut, self.service_timeout):
+            return None
+        return fut.result().robot_mode.mode
+
+    def _already_ready(self):
+        """Idempotenz-Check fuer prepare: ist der Arm bereits einsatzbereit
+        (RUNNING + Safety NORMAL/REDUCED + ExternalControl aktiv), sodass KEIN
+        Mode-Wechsel und damit kein robot_state_helper noetig ist? -> bool."""
+        robot_mode = self._get_robot_mode()
+        safety = self._get_safety_mode()
+        prog = self._program_running
+        if (robot_mode == RobotMode.RUNNING
+                and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED)
+                and prog is True):
+            self.get_logger().info(
+                "prepare: Arm bereits RUNNING + ExternalControl aktiv "
+                "-> kein Mode-Wechsel noetig (robot_state_helper nicht gebraucht).")
+            return True
+        self.get_logger().info(
+            "prepare: nicht direkt bereit (robot_mode="
+            f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unbekannt'}, "
+            f"safety={_safety_mode_name(safety) if safety is not None else 'unbekannt'}, "
+            f"program_running={prog}) -> delegiere an robot_state_helper.")
+        return False
 
     def _wait_if_protective_stop(self):
         """CB3: nach Protective-Stop >=5 s warten, bevor robot_state_helper unlockt."""
@@ -196,7 +249,15 @@ class StateManager(Node):
     # Ablaeufe (delegieren an robot_state_helper)
     # ======================================================================
     def prepare(self):
-        """Arm einsatzbereit: RUNNING + ExternalControl (aus POWER_OFF hochfahren)."""
+        """Arm einsatzbereit: RUNNING + ExternalControl (aus POWER_OFF hochfahren).
+
+        Idempotent: ist der Arm schon einsatzbereit, wird sofort success=True
+        gemeldet, OHNE den robot_state_helper zu benoetigen. So laeuft die Demo
+        auch beim wiederholten Start (Arm bereits RUNNING) durch, selbst wenn der
+        robot_state_helper gerade nicht erreichbar ist.
+        """
+        if self._already_ready():
+            return True, "bereits einsatzbereit (RUNNING, ExternalControl aktiv)"
         return self._set_mode(RobotMode.RUNNING, stop_program=False, play_program=True)
 
     def recover(self):
