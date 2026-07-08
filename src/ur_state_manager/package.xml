@@ -3,9 +3,9 @@
 <package format="3">
   <name>ur_state_manager</name>
   <version>0.0.0</version>
-  <description>Verwaltet den Zustand eines verbundenen UR5 (CB3): power_on/brake_release
-    zum Einsatzbereitmachen und Recovery nach Safety-Violation, ueber den
-    ur_robot_driver Dashboard-Client.</description>
+  <description>Verwaltet den Zustand eines verbundenen UR5 (CB3): Trigger-Adapter
+    (prepare/recover/ensure_ready/power_off), der an die SetMode-Action des
+    ur_robot_driver robot_state_helper delegiert.</description>
   <maintainer email="hannes.voss@haw-hamburg.de">Hannes Voss</maintainer>
   <license>TODO: License declaration</license>
 
@@ -14,7 +14,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>ur_dashboard_msgs</exec_depend>
-  <!-- liefert den dashboard_client-Node, den das Launch optional mitstartet -->
+  <!-- liefert dashboard_client + robot_state_helper (beide startet das Launch mit) -->
   <exec_depend>ur_robot_driver</exec_depend>
   <!-- controller_mode_manager: switch_controller/list_controllers + spawner -->
   <exec_depend>controller_manager_msgs</exec_depend>

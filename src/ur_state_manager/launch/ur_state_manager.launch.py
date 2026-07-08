@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Startet den ur_state_manager-Node fuer die a200-0553.
+"""Startet die Arm-State-Verwaltung fuer die a200-0553.
 
-Optional wird der ur_robot_driver Dashboard-Client mitgestartet (Default: an),
-weil Clearpath ihn im headless-Setup nicht mitbringt - ohne ihn gibt es keine
-power_on/brake_release/unlock_protective_stop-Services.
+Drei Nodes:
+  * dashboard_client (ur_robot_driver)   - Dashboard-Services (TCP 29999). Clearpath
+    bringt ihn im headless-Setup nicht mit; robot_state_helper braucht daraus
+    restart_safety/play, der Adapter get_safety_mode. Default: mitstarten.
+  * robot_state_helper (ur_robot_driver) - die eigentliche Mode-/Safety-Recovery.
+    Er oeffnet eine eigene Primary-Interface-Verbindung (robot_ip:30001) fuer
+    power_on/brake_release/unlock_protective_stop und nutzt relative Clients
+    dashboard_client/{restart_safety,play} + io_and_status_controller/
+    resend_robot_program sowie die *_mode-Topics -> laeuft daher im
+    manipulators-Namespace, damit alle relativen Namen passen.
+  * ur_state_manager (dieses Paket)      - duenner Adapter: haelt die gewohnte
+    Trigger-API (prepare/recover/ensure_ready/power_off) und delegiert an die
+    SetMode-Action des robot_state_helper.
 
 Defaults passen zum UR5 (CB3) auf a200-0553 (headless_mode, manipulators-Namespace).
 Per Launch-Argument ueberschreibbar.
@@ -21,7 +31,6 @@ ROBOT_IP = "192.168.131.40"
 
 def generate_launch_description():
     dashboard_ns = LaunchConfiguration("dashboard_ns")
-    io_status_ns = LaunchConfiguration("io_status_ns")
     headless_mode = LaunchConfiguration("headless_mode")
     start_dashboard_client = LaunchConfiguration("start_dashboard_client")
     robot_ip = LaunchConfiguration("robot_ip")
@@ -29,10 +38,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "dashboard_ns", default_value=f"{NS}/dashboard_client",
-            description="Namespace des ur_robot_driver Dashboard-Clients."),
-        DeclareLaunchArgument(
-            "io_status_ns", default_value=f"{NS}/io_and_status_controller",
-            description="Namespace des io_and_status_controller (resend_robot_program)."),
+            description="Namespace des ur_robot_driver Dashboard-Clients "
+                        "(fuer get_safety_mode im Adapter)."),
         DeclareLaunchArgument(
             "headless_mode", default_value="true",
             description="true -> ExternalControl via resend_robot_program "
@@ -59,6 +66,24 @@ def generate_launch_description():
             parameters=[{"robot_ip": robot_ip}],
         ),
 
+        # Offizielle Mode-/Safety-Recovery. Muss im manipulators-Namespace laufen,
+        # damit seine relativen Clients dashboard_client/* und io_and_status_controller/*
+        # sowie die *_mode-Topics aufloesen. headless_mode -> ExternalControl via
+        # resend_robot_program statt Dashboard-play.
+        Node(
+            package="ur_robot_driver",
+            executable="robot_state_helper",
+            name="ur_robot_state_helper",
+            namespace=NS,
+            output="screen",
+            emulate_tty=True,
+            parameters=[{
+                "robot_ip": robot_ip,
+                "headless_mode": headless_mode,
+            }],
+        ),
+
+        # Duenner Adapter: gewohnte Trigger-API -> SetMode-Action des Helpers.
         Node(
             package="ur_state_manager",
             executable="state_manager",
@@ -66,9 +91,8 @@ def generate_launch_description():
             namespace=NS,
             output="screen",
             parameters=[{
+                "set_mode_action": f"{NS}/ur_robot_state_helper/set_mode",
                 "dashboard_ns": dashboard_ns,
-                "io_status_ns": io_status_ns,
-                "headless_mode": headless_mode,
             }],
         ),
     ])

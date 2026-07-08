@@ -1,39 +1,48 @@
 #!/usr/bin/env python3
-"""ROS2-Node zum Verwalten eines bereits verbundenen UR5 (CB3) auf der a200-0553.
+"""Duenner Adapter auf den offiziellen 'robot_state_helper' (ur_robot_driver).
 
-Der Node spricht ueber den 'ur_robot_driver' Dashboard-Client (Port 29999 auf der
-UR-Control-Box) sowie ueber den 'io_and_status_controller' und bietet vier eigene
-std_srvs/Trigger-Services an:
+Frueher enthielt diese Datei eine eigene Mode-/Safety-Zustandsmaschine. Die ist
+jetzt durch den gepflegten 'robot_state_helper' aus dem ur_robot_driver ersetzt.
+Dieser Node ist nur noch ein *Adapter*: er behaelt die gewohnte
+std_srvs/Trigger-API (prepare / recover / ensure_ready / power_off) und den
+Node-Namen 'ur_state_manager' bei, damit bestehende Aufrufer (ur-state-manager
+.service, Skripte, robot.yaml-Integration) unveraendert weiterlaufen, und
+delegiert die eigentliche Arbeit an dessen ur_dashboard_msgs/action/SetMode-Action.
 
-  ~/prepare       Arm einsatzbereit machen: power_on + brake_release + ExternalControl
-                  (im headless_mode via resend_robot_program, sonst load+play).
-  ~/recover       Nach einer Safety-Violation wieder bereit machen:
-                  je nach safety_mode unlock_protective_stop / restart_safety,
-                  danach automatisch erneut prepare().
-  ~/ensure_ready  Komfort: liegt eine Safety-Violation vor -> recover, sonst prepare.
-  ~/power_off     Arm sicher abschalten (power_off).
+Was robot_state_helper alles selbst macht (und wir daher NICHT mehr nachbauen):
+  * power_on -> brake_release -> RUNNING (schrittweise Mode-Transition),
+  * unlock_protective_stop bei PROTECTIVE_STOP,
+  * restart_safety bei VIOLATION / FAULT,
+  * ExternalControl (re)starten: headless_mode -> resend_robot_program, sonst play,
+  * E-Stop wird nur gemeldet (nicht per Software loesbar).
 
-Hintergrund a200-0553 (siehe Projekt-Memory):
-  * UR5 CB3, Clearpath startet den Treiber mit 'headless_mode: true' -> das
-    ExternalControl-Programm wird vom Treiber direkt gesendet, NICHT von einer
-    laufenden URCap. Nach Power-Cycle / Protective-Stop muss die Kontrolle daher
-    ueber 'io_and_status_controller/resend_robot_program' neu gesendet werden.
-  * Der RG6-Greifer braucht den io_and_status_controller ohnehin; dieser Node
-    haengt aber NICHT vom Greifer ab.
+Einzige Zutat, die robot_state_helper NICHT kennt: die CB3-Pflicht, nach einem
+Protective-Stop >=5 s zu warten, bevor unlock_protective_stop akzeptiert wird.
+robot_state_helper unlockt sofort -> auf dem CB3 kann das fehlschlagen. Deshalb
+liest 'recover'/'ensure_ready' vorher den safety_mode (Dashboard-Client) und
+wartet ggf. kurz, BEVOR das SetMode-Goal (das intern sofort unlockt) rausgeht.
 
-Alle Service-/Namespace-Pfade sind Parameter (Defaults passen zu a200-0553).
+Mapping der Trigger-Services auf SetMode-Goals:
+  ~/prepare       SetMode{RUNNING,   stop_program=false, play_program=true}
+  ~/recover       [pstop-wait] SetMode{RUNNING, stop_program=true, play_program=true}
+  ~/ensure_ready  wie recover (SetMode macht ohnehin "whatever it takes")
+  ~/power_off     SetMode{POWER_OFF, stop_program=true,  play_program=false}
+
+Alle Namen sind Parameter (Defaults passen zu a200-0553).
 """
 
 import threading
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from std_srvs.srv import Trigger
+from ur_dashboard_msgs.action import SetMode
 from ur_dashboard_msgs.msg import RobotMode, SafetyMode
-from ur_dashboard_msgs.srv import GetRobotMode, GetSafetyMode, Load
+from ur_dashboard_msgs.srv import GetSafetyMode
 
 
 # Menschenlesbare Namen fuer Logausgaben (Konstanten kommen aus den .msg).
@@ -78,98 +87,64 @@ class StateManager(Node):
         super().__init__("ur_state_manager")
 
         # ---- Parameter ----------------------------------------------------
-        ns = self.declare_parameter("dashboard_ns",
-                                    "/a200_0553/manipulators/dashboard_client").value
-        io_ns = self.declare_parameter("io_status_ns",
-                                       "/a200_0553/manipulators/io_and_status_controller").value
-        self.headless_mode = self.declare_parameter("headless_mode", True).value
-        # Nur fuer headless_mode=False relevant: zu ladendes .urp-Programm vor 'play'.
-        self.program_name = self.declare_parameter("program_name", "").value
+        # Action des robot_state_helper. Er laeuft (siehe Launch) als Node
+        # 'ur_robot_state_helper' im manipulators-Namespace.
+        self.set_mode_action = self.declare_parameter(
+            "set_mode_action",
+            "/a200_0553/manipulators/ur_robot_state_helper/set_mode").value
+        # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig.
+        dashboard_ns = self.declare_parameter(
+            "dashboard_ns",
+            "/a200_0553/manipulators/dashboard_client").value.rstrip("/")
 
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
+        # Wie lange ein Mode-Uebergang (z.B. POWER_OFF -> RUNNING) dauern darf.
+        self.action_timeout = float(self.declare_parameter("action_timeout", 120.0).value)
         # CB3 verweigert das Loesen eines Protective-Stops < 5 s nach dem Ausloesen.
         self.protective_stop_wait = float(self.declare_parameter("protective_stop_wait", 6.0).value)
-        # Wie lange wir auf einen Mode-Wechsel (z.B. -> RUNNING) warten.
-        self.mode_timeout = float(self.declare_parameter("mode_timeout", 30.0).value)
-        self.mode_poll = float(self.declare_parameter("mode_poll_interval", 0.5).value)
 
-        ns = ns.rstrip("/")
-        io_ns = io_ns.rstrip("/")
-
-        # Damit Service-Server-Callbacks waehrend laufender Dashboard-Calls nicht
-        # blockieren (wir rufen synchron aus dem Callback heraus), liegen alle
-        # Clients UND Server in einer ReentrantCallbackGroup + MultiThreadedExecutor.
+        # Clients + Server in einer ReentrantCallbackGroup, damit wir synchron aus
+        # einem Service-Callback heraus die Action abwarten koennen (Antwort wird
+        # von einem anderen Thread des MultiThreadedExecutor verarbeitet).
         self.cbg = ReentrantCallbackGroup()
 
-        # ---- Dashboard-/IO-Clients ---------------------------------------
-        def trig(name):
-            return self.create_client(Trigger, name, callback_group=self.cbg)
-
-        self.cli_power_on = trig(f"{ns}/power_on")
-        self.cli_power_off = trig(f"{ns}/power_off")
-        self.cli_brake_release = trig(f"{ns}/brake_release")
-        self.cli_unlock_pstop = trig(f"{ns}/unlock_protective_stop")
-        self.cli_restart_safety = trig(f"{ns}/restart_safety")
-        self.cli_close_safety_popup = trig(f"{ns}/close_safety_popup")
-        self.cli_close_popup = trig(f"{ns}/close_popup")
-        self.cli_play = trig(f"{ns}/play")
-        self.cli_get_robot_mode = self.create_client(
-            GetRobotMode, f"{ns}/get_robot_mode", callback_group=self.cbg)
+        self.cli_set_mode = ActionClient(
+            self, SetMode, self.set_mode_action, callback_group=self.cbg)
         self.cli_get_safety_mode = self.create_client(
-            GetSafetyMode, f"{ns}/get_safety_mode", callback_group=self.cbg)
-        self.cli_load_program = self.create_client(
-            Load, f"{ns}/load_program", callback_group=self.cbg)
+            GetSafetyMode, f"{dashboard_ns}/get_safety_mode", callback_group=self.cbg)
 
-        # ExternalControl (re)starten -> liefert der io_and_status_controller.
-        self.cli_resend_program = trig(f"{io_ns}/resend_robot_program")
-
-        # ---- Eigene Services ---------------------------------------------
-        # Eine globale Sperre: nie zwei Ablaeufe gleichzeitig.
-        self._lock = threading.Lock()
+        # ---- Eigene Services (unveraendert zur alten API) -----------------
+        self._lock = threading.Lock()  # nie zwei Ablaeufe gleichzeitig
         self.create_service(Trigger, "~/prepare", self._srv_prepare, callback_group=self.cbg)
         self.create_service(Trigger, "~/recover", self._srv_recover, callback_group=self.cbg)
         self.create_service(Trigger, "~/ensure_ready", self._srv_ensure_ready, callback_group=self.cbg)
         self.create_service(Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg)
 
         self.get_logger().info(
-            f"ur_state_manager bereit. dashboard_ns={ns} io_status_ns={io_ns} "
-            f"headless_mode={self.headless_mode}")
+            f"ur_state_manager (Adapter) bereit. set_mode_action={self.set_mode_action} "
+            f"dashboard_ns={dashboard_ns}")
 
     # ======================================================================
     # Low-Level-Helfer
     # ======================================================================
     def _spin_future(self, future, timeout):
-        """Auf ein call_async-Future warten, ohne den Executor-Thread zu blockieren.
-
-        Funktioniert, weil die Future-Antwort von einem anderen Thread des
-        MultiThreadedExecutor verarbeitet wird (Clients in ReentrantCallbackGroup).
-        """
+        """Auf ein *_async-Future warten, ohne den Executor-Thread zu blockieren."""
         done = threading.Event()
         future.add_done_callback(lambda _f: done.set())
-        if not done.wait(timeout):
-            return False
-        return future.done()
+        return done.wait(timeout) and future.done()
 
-    def _trigger(self, client, label):
-        """std_srvs/Trigger-Service aufrufen -> (success, message)."""
-        if not client.wait_for_service(timeout_sec=self.service_timeout):
-            return False, f"Service '{label}' nicht verfuegbar"
-        fut = client.call_async(Trigger.Request())
-        if not self._spin_future(fut, self.service_timeout):
-            return False, f"'{label}' Timeout"
-        res = fut.result()
-        self.get_logger().info(f"{label}: success={res.success} msg=\"{res.message}\"")
-        return res.success, res.message
+    def _sleep(self, seconds):
+        """Nicht-blockierendes Warten (gibt den Thread frei)."""
+        threading.Event().wait(seconds)
 
-    def _get_robot_mode(self):
-        if not self.cli_get_robot_mode.wait_for_service(timeout_sec=self.service_timeout):
-            return None
-        fut = self.cli_get_robot_mode.call_async(GetRobotMode.Request())
-        if not self._spin_future(fut, self.service_timeout):
-            return None
-        return fut.result().robot_mode.mode
+    def _on_feedback(self, feedback_msg):
+        fb = feedback_msg.feedback
+        self.get_logger().info(
+            f"SetMode-Feedback: robot_mode={_robot_mode_name(fb.current_robot_mode)} "
+            f"safety_mode={_safety_mode_name(fb.current_safety_mode)}")
 
     def _get_safety_mode(self):
+        """safety_mode ueber den Dashboard-Client lesen. -> mode | None."""
         if not self.cli_get_safety_mode.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_get_safety_mode.call_async(GetSafetyMode.Request())
@@ -177,153 +152,67 @@ class StateManager(Node):
             return None
         return fut.result().safety_mode.mode
 
-    def _wait_for_robot_mode(self, targets, timeout=None):
-        """Pollt get_robot_mode bis der Mode in 'targets' liegt. -> erreichter Mode|None."""
-        timeout = self.mode_timeout if timeout is None else timeout
-        deadline = self.get_clock().now().nanoseconds + int(timeout * 1e9)
-        last = None
-        while rclpy.ok() and self.get_clock().now().nanoseconds < deadline:
-            mode = self._get_robot_mode()
-            if mode is not None and mode != last:
-                self.get_logger().info(f"robot_mode = {_robot_mode_name(mode)}")
-                last = mode
-            if mode in targets:
-                return mode
-            self._sleep(self.mode_poll)
-        return None
+    def _wait_if_protective_stop(self):
+        """CB3: nach Protective-Stop >=5 s warten, bevor robot_state_helper unlockt."""
+        safety = self._get_safety_mode()
+        if safety == SafetyMode.PROTECTIVE_STOP:
+            self.get_logger().info(
+                f"Protective-Stop erkannt -> warte {self.protective_stop_wait}s "
+                "(CB3-Pflicht) vor dem unlock ...")
+            self._sleep(self.protective_stop_wait)
+        elif safety is None:
+            self.get_logger().warn(
+                "safety_mode nicht lesbar (Dashboard-Client da?) - fahre ohne "
+                "CB3-Wartezeit fort; ggf. recover erneut aufrufen.")
 
-    def _wait_for_safety_mode(self, targets, timeout=None):
-        timeout = self.mode_timeout if timeout is None else timeout
-        deadline = self.get_clock().now().nanoseconds + int(timeout * 1e9)
-        last = None
-        while rclpy.ok() and self.get_clock().now().nanoseconds < deadline:
-            mode = self._get_safety_mode()
-            if mode is not None and mode != last:
-                self.get_logger().info(f"safety_mode = {_safety_mode_name(mode)}")
-                last = mode
-            if mode in targets:
-                return mode
-            self._sleep(self.mode_poll)
-        return None
+    def _set_mode(self, target, stop_program, play_program):
+        """SetMode-Goal senden und synchron auf das Ergebnis warten. -> (ok, msg)."""
+        if not self.cli_set_mode.wait_for_server(timeout_sec=self.service_timeout):
+            return False, ("robot_state_helper/set_mode-Action nicht verfuegbar - "
+                           "laeuft der ur_robot_state_helper-Node?")
 
-    def _sleep(self, seconds):
-        """Nicht-blockierendes Warten ueber ein Event (gibt den Thread frei)."""
-        threading.Event().wait(seconds)
+        goal = SetMode.Goal()
+        goal.target_robot_mode = target
+        goal.stop_program = stop_program
+        goal.play_program = play_program
+        self.get_logger().info(
+            f"SetMode -> target={_robot_mode_name(target)} "
+            f"stop_program={stop_program} play_program={play_program}")
 
-    def _start_external_control(self):
-        """ExternalControl (re)starten. headless -> resend_robot_program, sonst load+play."""
-        if self.headless_mode:
-            return self._trigger(self.cli_resend_program, "resend_robot_program")
+        send_fut = self.cli_set_mode.send_goal_async(goal, feedback_callback=self._on_feedback)
+        if not self._spin_future(send_fut, self.service_timeout):
+            return False, "SetMode: Timeout beim Senden des Goals"
+        handle = send_fut.result()
+        if not handle.accepted:
+            return False, "SetMode-Goal abgelehnt (laeuft schon ein Vorgang im robot_state_helper?)"
 
-        if self.program_name:
-            if not self.cli_load_program.wait_for_service(timeout_sec=self.service_timeout):
-                return False, "load_program nicht verfuegbar"
-            req = Load.Request()
-            req.filename = self.program_name
-            fut = self.cli_load_program.call_async(req)
-            if not self._spin_future(fut, self.service_timeout):
-                return False, "load_program Timeout"
-            res = fut.result()
-            self.get_logger().info(f"load_program: success={res.success} answer=\"{res.answer}\"")
-            if not res.success:
-                return False, f"load_program fehlgeschlagen: {res.answer}"
-        return self._trigger(self.cli_play, "play")
+        res_fut = handle.get_result_async()
+        if not self._spin_future(res_fut, self.action_timeout):
+            return False, f"SetMode: Timeout ({self.action_timeout}s) beim Warten auf das Ergebnis"
+        result = res_fut.result().result
+        return result.success, result.message
 
     # ======================================================================
-    # Ablaeufe (synchron, unter self._lock)
+    # Ablaeufe (delegieren an robot_state_helper)
     # ======================================================================
     def prepare(self):
-        """power_on -> brake_release -> ExternalControl. -> (success, message)."""
-        mode = self._get_robot_mode()
-        if mode is None:
-            return False, "robot_mode nicht lesbar (Dashboard-Client erreichbar?)"
-        self.get_logger().info(f"prepare(): Start-Mode = {_robot_mode_name(mode)}")
-
-        # 1) Einschalten, falls noch nicht (mind.) bestromt.
-        if mode in (RobotMode.POWER_OFF, RobotMode.BOOTING, RobotMode.CONFIRM_SAFETY):
-            ok, msg = self._trigger(self.cli_power_on, "power_on")
-            if not ok:
-                return False, f"power_on fehlgeschlagen: {msg}"
-            if self._wait_for_robot_mode((RobotMode.IDLE, RobotMode.POWER_ON,
-                                          RobotMode.RUNNING)) is None:
-                return False, "Timeout beim Warten auf POWER_ON/IDLE"
-            mode = self._get_robot_mode()
-
-        # 2) Bremsen loesen, falls noch nicht RUNNING.
-        if mode != RobotMode.RUNNING:
-            ok, msg = self._trigger(self.cli_brake_release, "brake_release")
-            if not ok:
-                return False, f"brake_release fehlgeschlagen: {msg}"
-            if self._wait_for_robot_mode((RobotMode.RUNNING,)) is None:
-                return False, "Timeout beim Warten auf RUNNING (brake_release)"
-
-        # 3) ExternalControl starten, damit ROS den Arm wieder bewegen darf.
-        ok, msg = self._start_external_control()
-        if not ok:
-            return False, f"ExternalControl-Start fehlgeschlagen: {msg}"
-
-        return True, "Arm einsatzbereit (RUNNING, ExternalControl aktiv)"
+        """Arm einsatzbereit: RUNNING + ExternalControl (aus POWER_OFF hochfahren)."""
+        return self._set_mode(RobotMode.RUNNING, stop_program=False, play_program=True)
 
     def recover(self):
-        """Nach Safety-Violation wieder bereit machen. -> (success, message)."""
-        safety = self._get_safety_mode()
-        if safety is None:
-            return False, "safety_mode nicht lesbar (Dashboard-Client erreichbar?)"
-        self.get_logger().info(f"recover(): safety_mode = {_safety_mode_name(safety)}")
+        """Nach Safety-Violation wieder bereit: Programm stoppen, RUNNING, neu starten.
 
-        # Eventuelle Safety-Popups wegklicken (blockieren sonst Dashboard-Befehle).
-        self._trigger(self.cli_close_safety_popup, "close_safety_popup")
+        robot_state_helper behandelt PROTECTIVE_STOP / VIOLATION / FAULT / E-Stop
+        selbst; wir warten davor nur die CB3-Pflichtzeit ab. stop_program=true
+        entspricht der UR-Empfehlung, nach einem Stop das Programm NEU zu starten
+        (statt es einfach fortzusetzen).
+        """
+        self._wait_if_protective_stop()
+        return self._set_mode(RobotMode.RUNNING, stop_program=True, play_program=True)
 
-        if safety in (SafetyMode.NORMAL, SafetyMode.REDUCED):
-            self.get_logger().info("Keine Safety-Violation -> nur prepare().")
-            return self.prepare()
-
-        if safety == SafetyMode.PROTECTIVE_STOP:
-            # CB3: erst nach >=5 s loesbar.
-            self.get_logger().info(
-                f"Protective-Stop: warte {self.protective_stop_wait}s vor unlock ...")
-            self._sleep(self.protective_stop_wait)
-            ok, msg = self._trigger(self.cli_unlock_pstop, "unlock_protective_stop")
-            if not ok:
-                return False, f"unlock_protective_stop fehlgeschlagen: {msg}"
-            if self._wait_for_safety_mode((SafetyMode.NORMAL, SafetyMode.REDUCED)) is None:
-                return False, "Timeout: safety_mode bleibt nach unlock != NORMAL"
-            return self.prepare()
-
-        if safety == SafetyMode.SAFEGUARD_STOP:
-            # Safeguard wird durch das physische Reset-Signal aufgehoben; danach
-            # ggf. RUNNING wiederherstellen. Wir warten kurz auf NORMAL.
-            self.get_logger().warn(
-                "SAFEGUARD_STOP: Schutzeinrichtung physisch zuruecksetzen. "
-                "Warte auf Aufhebung ...")
-            if self._wait_for_safety_mode((SafetyMode.NORMAL, SafetyMode.REDUCED)) is None:
-                return False, ("Safeguard-Stop besteht weiter - Schutztuer/Reset "
-                               "physisch pruefen")
-            return self.prepare()
-
-        if safety in (SafetyMode.VIOLATION, SafetyMode.FAULT):
-            # Safety-Controller neu starten -> Roboter geht in POWER_OFF, danach
-            # voller prepare-Ablauf.
-            self.get_logger().warn(
-                f"{_safety_mode_name(safety)}: restart_safety (Roboter schaltet ab) ...")
-            ok, msg = self._trigger(self.cli_restart_safety, "restart_safety")
-            if not ok:
-                return False, f"restart_safety fehlgeschlagen: {msg}"
-            # Safety-Controller braucht ein paar Sekunden zum Neustart.
-            self._wait_for_robot_mode((RobotMode.POWER_OFF, RobotMode.IDLE,
-                                       RobotMode.POWER_ON), timeout=self.mode_timeout)
-            self._trigger(self.cli_close_safety_popup, "close_safety_popup")
-            if self._wait_for_safety_mode((SafetyMode.NORMAL, SafetyMode.REDUCED)) is None:
-                return False, "safety_mode nach restart_safety != NORMAL"
-            return self.prepare()
-
-        if safety in (SafetyMode.ROBOT_EMERGENCY_STOP,
-                      SafetyMode.SYSTEM_EMERGENCY_STOP):
-            return False, ("Not-Halt aktiv - kann NICHT per Software aufgehoben werden. "
-                           "E-Stop physisch entriegeln, dann recover erneut aufrufen.")
-
-        return False, (f"safety_mode {_safety_mode_name(safety)} - keine automatische "
-                       "Recovery moeglich")
+    def power_off(self):
+        """Arm sicher abschalten."""
+        return self._set_mode(RobotMode.POWER_OFF, stop_program=True, play_program=False)
 
     # ======================================================================
     # Service-Callbacks
@@ -352,18 +241,11 @@ class StateManager(Node):
         return self._run_locked(self.recover, response)
 
     def _srv_ensure_ready(self, _request, response):
-        def fn():
-            safety = self._get_safety_mode()
-            if safety is None:
-                return False, "safety_mode nicht lesbar"
-            if safety in (SafetyMode.NORMAL, SafetyMode.REDUCED):
-                return self.prepare()
-            return self.recover()
-        return self._run_locked(fn, response)
+        # SetMode macht ohnehin "was noetig ist" -> identisch zu recover (inkl. CB3-Wait).
+        return self._run_locked(self.recover, response)
 
     def _srv_power_off(self, _request, response):
-        return self._run_locked(
-            lambda: self._trigger(self.cli_power_off, "power_off"), response)
+        return self._run_locked(self.power_off, response)
 
 
 def main():
