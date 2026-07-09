@@ -140,9 +140,29 @@ class StateManager(Node):
         self.create_service(Trigger, "~/ensure_ready", self._srv_ensure_ready, callback_group=self.cbg)
         self.create_service(Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg)
 
+        # ---- Auto-Recovery-Watcher (spaetes Einschalten des Arms) ----------
+        # Wird der UR erst NACH dem Boot bestromt, laeuft ExternalControl nicht an
+        # (Teach-Panel "Paused", Arm ohne Feedback, Greifer stromlos). Dieser Watcher
+        # erkennt "bestromt, aber ExternalControl aus" und ruft selbsttaetig recover
+        # -> RUNNING + frisches ExternalControl. recover nutzt stop_program=True (sauberer
+        # Neustart -> Treiber sync't Command=Ist -> KEIN Positionssprung/Protective-Stop,
+        # anders als ein blosses prepare/play, das den Paused-Stand mit stale Command
+        # fortsetzt). Danach zieht die rg6_control-Programm-Flanke Tool-Power + Prime nach.
+        # auto_recover=false schaltet den Automatismus ab.
+        self.auto_recover = bool(self.declare_parameter("auto_recover", True).value)
+        self.auto_recover_period = float(
+            self.declare_parameter("auto_recover_period", 5.0).value)
+        # so viele aufeinanderfolgende "muss recovern"-Beobachtungen vor dem Handeln
+        # (entprellt Boot-/prepare-Uebergaenge, in denen der Zustand kurz passt).
+        self.auto_recover_settle = int(self.declare_parameter("auto_recover_settle", 2).value)
+        self._needs_recover_count = 0
+        if self.auto_recover:
+            self.create_timer(
+                self.auto_recover_period, self._auto_recover_tick, callback_group=self.cbg)
+
         self.get_logger().info(
             f"ur_state_manager (Adapter) bereit. set_mode_action={self.set_mode_action} "
-            f"dashboard_ns={dashboard_ns}")
+            f"dashboard_ns={dashboard_ns} auto_recover={self.auto_recover}")
 
     # ======================================================================
     # Low-Level-Helfer
@@ -274,6 +294,42 @@ class StateManager(Node):
     def power_off(self):
         """Arm sicher abschalten."""
         return self._set_mode(RobotMode.POWER_OFF, stop_program=True, play_program=False)
+
+    # ======================================================================
+    # Auto-Recovery: bringt den Arm nach spaetem Einschalten ohne Handgriff hoch
+    # ======================================================================
+    def _needs_recover(self):
+        """True, wenn der Arm bestromt ist, ExternalControl aber NICHT laeuft.
+
+        Genau der Zustand nach spaetem Einschalten / 'Paused': robot_mode in
+        {POWER_ON, IDLE, RUNNING}, aber robot_program_running=False. POWER_OFF /
+        DISCONNECTED / BOOTING (Arm bewusst aus bzw. faehrt noch hoch) und
+        BACKDRIVE (Freedrive) werden NICHT angefasst. Unbekannter Programmstatus
+        (None, noch nichts empfangen) -> nicht handeln (sicherer Default)."""
+        if self._program_running is not False:
+            return False  # laeuft schon, oder Status noch unbekannt
+        mode = self._get_robot_mode()
+        return mode in (RobotMode.POWER_ON, RobotMode.IDLE, RobotMode.RUNNING)
+
+    def _auto_recover_tick(self):
+        # Laeuft schon ein prepare/recover (manuell ODER auto)? -> nicht reinfunken.
+        if self._lock.locked():
+            self._needs_recover_count = 0
+            return
+        if not self._needs_recover():
+            self._needs_recover_count = 0
+            return
+        self._needs_recover_count += 1
+        if self._needs_recover_count < max(1, self.auto_recover_settle):
+            return  # entprellen: erst nach mehreren konsistenten Beobachtungen handeln
+        self._needs_recover_count = 0
+        self.get_logger().warn(
+            "Auto-Recovery: Arm bestromt, aber ExternalControl laeuft nicht "
+            "(spaetes Einschalten / Paused) -> fuehre recover aus ...")
+        resp = Trigger.Response()
+        self._run_locked(self.recover, resp)
+        self.get_logger().info(
+            f"Auto-Recovery: recover -> success={resp.success} ({resp.message})")
 
     # ======================================================================
     # Service-Callbacks

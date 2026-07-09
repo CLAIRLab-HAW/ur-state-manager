@@ -36,6 +36,20 @@ Jeder Service übersetzt in ein `SetMode`-Goal an den `robot_state_helper`:
 
 Voller Servicename = Node-Name vorangestellt, z. B. `/a200_0553/manipulators/ur_state_manager/prepare`.
 
+### Auto-Recovery bei spätem Einschalten des Arms (`auto_recover`, Default an)
+
+Wird der UR **erst nach dem Boot** bestromt, läuft ExternalControl nicht an: Teach-Panel
+„Paused", Arm ohne Feedback (in RViz „liegend"), Greifer stromlos. Ein Watcher-Timer
+erkennt den Zustand **„bestromt, aber ExternalControl aus"** (`robot_mode` ∈
+{`POWER_ON`,`IDLE`,`RUNNING`} und `robot_program_running=False`) und ruft selbsttätig
+`recover`. Bewusst `recover` (nicht `prepare`): `stop_program=True` erzwingt einen
+**frischen** ExternalControl-Start → der Treiber sync't `Command=Ist` → **kein
+Positionssprung/Protective-Stop**, anders als ein blosses `prepare`/`play`, das den
+Paused-Stand mit veraltetem Command fortsetzt. Danach zieht die `rg6_control`-Programm-
+Flanke Tool-Power + Prime automatisch nach — spätes Einschalten braucht so **keinen
+manuellen Handgriff** mehr. Nur bestromte Zustände werden angefasst; `POWER_OFF`/
+`BOOTING`/`BACKDRIVE` bleiben unberührt. Abschaltbar mit `auto_recover:=false`.
+
 > **CB3-Sonderfall:** `robot_state_helper` löst einen Protective-Stop *sofort*, der CB3
 > verweigert das aber < 5 s nach dem Auslösen. Deshalb liest `recover`/`ensure_ready`
 > vorher `dashboard_client/get_safety_mode` und wartet bei `PROTECTIVE_STOP` kurz
@@ -140,6 +154,9 @@ Das komplette Safety-Handling steckt jetzt im `robot_state_helper` (aufgerufen a
 | `service_timeout` | `10.0` | Timeout beim Warten auf Action-Server/Service (s). |
 | `action_timeout` | `120.0` | Max. Wartezeit auf das `SetMode`-Ergebnis (Mode-Transition). |
 | `protective_stop_wait` | `6.0` | Wartezeit vor dem `SetMode`-Goal bei `PROTECTIVE_STOP` (CB3 ≥ 5 s). |
+| `auto_recover` | `true` | Watcher, der nach spätem Einschalten selbsttätig `recover` ausführt (s. o.). `false` → aus. |
+| `auto_recover_period` | `5.0` | Prüfintervall des Watchers (s). |
+| `auto_recover_settle` | `2` | So viele konsistente „muss recovern"-Beobachtungen vor dem Handeln (entprellt Boot-/`prepare`-Übergänge). |
 
 ### `ur_robot_state_helper` (aus `ur_robot_driver`, per Launch gestartet)
 
