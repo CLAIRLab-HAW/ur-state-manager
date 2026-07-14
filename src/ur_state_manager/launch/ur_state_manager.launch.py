@@ -70,6 +70,21 @@ def generate_launch_description():
         # damit seine relativen Clients dashboard_client/* und io_and_status_controller/*
         # sowie die *_mode-Topics aufloesen. headless_mode -> ExternalControl via
         # resend_robot_program statt Dashboard-play.
+        #
+        # respawn=True: ur_robot_driver 3.7 (jazzy) hat einen Upstream-Race im
+        # RobotStateHelper::setModeExecute -> es nutzt das SHARED current_goal_handle_
+        # (nicht den lokalen goal_handle-Param) fuer succeed()/abort(). Geht ein
+        # zweites SetMode-Goal ein, waehrend das erste noch im Wait-Loop laeuft
+        # (z.B. ein Kalibrierungs-/Skript-prepare + auto_recover gleichzeitig),
+        # ueberschreibt Goal #2 current_goal_handle_; Goal #1 ruft danach succeed()
+        # auf dem bereits succeedeten Goal #2 -> rcl_action "invalid transition from
+        # SUCCEEDED with event SUCCEED" -> std::terminate -> SIGABRT (exit -6). Der
+        # Zustandswechsel (POWER_OFF->RUNNING) war bereits durch; nur das
+        # Folge-succeed crasht den Node. Ohne Respawn bleibt der Helper tot -> die
+        # set_mode-Action verschwindet -> jeder folgende prepare/recover schlaegt fehl
+        # ("set_mode-Action nicht verfuegbar"). Respawn startet ihn nach ~2 s neu;
+        # der eigentliche Trigger (konkurrierende Goals) wird zusaetzlich durch
+        # auto_recover:=false abgestellt (keine parallelen Watcher-Recoveries mehr).
         Node(
             package="ur_robot_driver",
             executable="robot_state_helper",
@@ -77,6 +92,8 @@ def generate_launch_description():
             namespace=NS,
             output="screen",
             emulate_tty=True,
+            respawn=True,
+            respawn_delay=2.0,
             parameters=[{
                 "robot_ip": robot_ip,
                 "headless_mode": headless_mode,
