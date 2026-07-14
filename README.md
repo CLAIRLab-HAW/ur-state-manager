@@ -1,130 +1,129 @@
 # ur_state_manager
 
-Verwaltet den Zustand eines **bereits verbundenen** UR5 (CB3) auf der `a200-0553`:
-Arm einsatzbereit machen und nach einer Safety-Violation wieder herstellen.
+Manages the state of an **already connected** UR5 (CB3) on the `a200-0553`:
+make the arm ready for operation and restore it after a safety violation.
 
-> **Umbau (2026-07):** Die frühere eigene Mode-/Safety-Zustandsmaschine ist durch den
-> offiziellen **`robot_state_helper`** aus dem `ur_robot_driver` ersetzt. Dieser Node ist
-> jetzt nur noch ein **dünner Adapter**: er behält die gewohnte `std_srvs/Trigger`-API und
-> den Node-Namen `ur_state_manager` bei (nichts Downstream bricht) und delegiert an die
-> `ur_dashboard_msgs/action/SetMode`-Action des `robot_state_helper`.
+> **Refactor (2026-07):** The former custom mode/safety state machine has been replaced by the
+> official **`robot_state_helper`** from the `ur_robot_driver`. This node is now just a **thin
+> adapter**: it keeps the familiar `std_srvs/Trigger` API and the node name `ur_state_manager`
+> (nothing downstream breaks) and delegates to the `ur_dashboard_msgs/action/SetMode` action of
+> the `robot_state_helper`.
 >
-> Der `robot_state_helper` erledigt selbst: `power_on` → `brake_release` → `RUNNING`,
-> `unlock_protective_stop`, `restart_safety` bei `VIOLATION`/`FAULT`, sowie
-> ExternalControl (headless: `resend_robot_program`, sonst `play`). Das Launch dieses
-> Pakets startet ihn mit.
+> The `robot_state_helper` handles `power_on` → `brake_release` → `RUNNING`,
+> `unlock_protective_stop`, `restart_safety` on `VIOLATION`/`FAULT`, as well as
+> ExternalControl (headless: `resend_robot_program`, otherwise `play`) on its own. This
+> package's launch starts it along with the adapter.
 
-Er deckt zwei Aufgaben ab:
+It covers two tasks:
 
-1. **Einsatzbereit machen** – `power_on` → `brake_release` → ExternalControl starten.
-2. **Recovery nach Safety-Violation** – Arm ist nach Kollision / Protective-Stop in den
-   Lock-/Stop-State gefallen und soll wieder bereit werden.
+1. **Make ready for operation** – `power_on` → `brake_release` → start ExternalControl.
+2. **Recovery after a safety violation** – the arm has dropped into a
+   lock/stop state after a collision / protective-stop and should be made ready again.
 
-> Der Node **bewegt den Arm nicht** und sendet keine Trajektorien. Er stellt nur sicher,
-> dass der Arm bestromt, Bremsen gelöst und ROS-kontrollierbar (ExternalControl aktiv) ist.
+> The node **does not move the arm** and does not send any trajectories. It only ensures
+> that the arm is powered, brakes are released, and it is ROS-controllable (ExternalControl active).
 
-## Angebotene Services (alle `std_srvs/Trigger`)
+## Provided Services (all `std_srvs/Trigger`)
 
-Jeder Service übersetzt in ein `SetMode`-Goal an den `robot_state_helper`:
+Each service translates into a `SetMode` goal to the `robot_state_helper`:
 
-| Service | Delegiert an `SetMode` | Wirkung |
+| Service | Delegates to `SetMode` | Effect |
 |---|---|---|
-| `~/prepare` | `{RUNNING, play_program}` | Hochfahren bis `RUNNING` + ExternalControl. **Idempotent:** ist der Arm schon `RUNNING` + Safety `NORMAL`/`REDUCED` + ExternalControl aktiv, meldet `prepare` sofort `success=True` **ohne** `robot_state_helper` (Demo läuft auch beim wiederholten Start durch). Sonst delegiert es; `robot_state_helper` überspringt erledigte Schritte selbst. |
-| `~/recover` | `[pstop-wait] {RUNNING, stop_program, play_program}` | Nach Safety-Violation: Programm stoppen, `RUNNING` wiederherstellen, neu starten (UR-Empfehlung nach einem Stop). Safety-Handling macht der Helper. |
-| `~/ensure_ready` | wie `recover` | `SetMode` macht ohnehin „whatever it takes" → identisch zu `recover` (inkl. CB3-Wartezeit). |
-| `~/power_off` | `{POWER_OFF, stop_program}` | Arm sicher abschalten. |
+| `~/prepare` | `{RUNNING, play_program}` | Boot up to `RUNNING` + ExternalControl. **Idempotent:** if the arm is already `RUNNING` + safety `NORMAL`/`REDUCED` + ExternalControl active, `prepare` returns `success=True` immediately **without** `robot_state_helper` (the demo also runs through on repeated starts). Otherwise it delegates; `robot_state_helper` skips completed steps on its own. |
+| `~/recover` | `[pstop-wait] {RUNNING, stop_program, play_program}` | After a safety violation: stop the program, restore `RUNNING`, restart (UR recommendation after a stop). The helper handles the safety handling. |
+| `~/ensure_ready` | like `recover` | `SetMode` does "whatever it takes" anyway → identical to `recover` (including the CB3 wait time). |
+| `~/power_off` | `{POWER_OFF, stop_program}` | Safely power off the arm. |
 
-Voller Servicename = Node-Name vorangestellt, z. B. `/a200_0553/manipulators/ur_state_manager/prepare`.
+Full service name = node name prefixed, e.g. `/a200_0553/manipulators/ur_state_manager/prepare`.
 
-### Auto-Recovery bei spätem Einschalten des Arms (`auto_recover`, Default an)
+### Auto-recovery on late arm power-on (`auto_recover`, default on)
 
-Wird der UR **erst nach dem Boot** bestromt, läuft ExternalControl nicht an: Teach-Panel
-„Paused", Arm ohne Feedback (in RViz „liegend"), Greifer stromlos. Ein Watcher-Timer
-erkennt den Zustand **„bestromt, aber ExternalControl aus"** (`robot_mode` ∈
-{`POWER_ON`,`IDLE`,`RUNNING`} und `robot_program_running=False`) und ruft selbsttätig
-`recover`. Bewusst `recover` (nicht `prepare`): `stop_program=True` erzwingt einen
-**frischen** ExternalControl-Start → der Treiber sync't `Command=Ist` → **kein
-Positionssprung/Protective-Stop**, anders als ein blosses `prepare`/`play`, das den
-Paused-Stand mit veraltetem Command fortsetzt. Danach zieht die `rg6_control`-Programm-
-Flanke Tool-Power + Prime automatisch nach — spätes Einschalten braucht so **keinen
-manuellen Handgriff** mehr. Nur bestromte Zustände werden angefasst; `POWER_OFF`/
-`BOOTING`/`BACKDRIVE` bleiben unberührt. Abschaltbar mit `auto_recover:=false`.
+If the UR is powered **only after boot**, ExternalControl does not start up: teach pendant
+shows "Paused", arm without feedback ("lying down" in RViz), gripper unpowered. A watcher
+timer detects the state **"powered, but ExternalControl off"** (`robot_mode` ∈
+{`POWER_ON`,`IDLE`,`RUNNING`} and `robot_program_running=False`) and automatically calls
+`recover`. Deliberately `recover` (not `prepare`): `stop_program=True` forces a **fresh**
+ExternalControl start → the driver syncs `Command=actual` → **no position jump/protective
+stop**, unlike a mere `prepare`/`play` that resumes the paused state with a stale command.
+Afterwards the `rg6_control` program edge pulls up tool power + prime automatically — late
+power-on thus needs **no manual intervention** anymore. Only powered states are touched;
+`POWER_OFF`/`BOOTING`/`BACKDRIVE` are left untouched. Disable with `auto_recover:=false`.
 
-> **CB3-Sonderfall:** `robot_state_helper` löst einen Protective-Stop *sofort*, der CB3
-> verweigert das aber < 5 s nach dem Auslösen. Deshalb liest `recover`/`ensure_ready`
-> vorher `dashboard_client/get_safety_mode` und wartet bei `PROTECTIVE_STOP` kurz
-> (`protective_stop_wait`, Default 6 s), **bevor** das Goal rausgeht.
+> **CB3 special case:** `robot_state_helper` clears a protective stop *immediately*, but the
+> CB3 refuses this < 5 s after it was triggered. Therefore `recover`/`ensure_ready` read
+> `dashboard_client/get_safety_mode` first and, on `PROTECTIVE_STOP`, wait briefly
+> (`protective_stop_wait`, default 6 s) **before** sending the goal.
 
-## Controller pro Anwendungsfall umschalten (`controller_mode_manager`)
+## Switching controllers per use case (`controller_mode_manager`)
 
-Zweiter Node + Launch zum **Laufzeit-Umschalten der Arm-Controller**. Idee: EIN
-`controller_manager` hostet alle Controller; die sich gegenseitig ausschließenden
-**Command-Controller** liegen meist **inaktiv** und werden per `switch_controller`
-aktiviert. Der Basis-Satz (von Clearpath gespawnt: `joint_state_broadcaster`,
-`arm_0_joint_trajectory_controller`, `io_and_status_controller`) bleibt unangetastet.
+Second node + launch for **switching the arm controllers at runtime**. Idea: ONE
+`controller_manager` hosts all controllers; the mutually exclusive **command controllers**
+are usually **inactive** and get activated via `switch_controller`. The base set (spawned by
+Clearpath: `joint_state_broadcaster`, `arm_0_joint_trajectory_controller`,
+`io_and_status_controller`) stays untouched.
 
-`arm_controllers.launch.py` lädt die Extra-Controller `--inactive` (aus
-`config/extra_controllers.yaml`) und startet den Mode-Manager:
+`arm_controllers.launch.py` loads the extra controllers `--inactive` (from
+`config/extra_controllers.yaml`) and starts the mode manager:
 
 ```bash
 ros2 launch ur_state_manager arm_controllers.launch.py
 ```
 
-Modi (Default; `mode_names`/`mode_controllers`-Parameter überschreibbar) — je ein
-`std_srvs/Trigger`-Service:
+Modes (default; `mode_names`/`mode_controllers` parameters overridable) — one
+`std_srvs/Trigger` service each:
 
-| Service | aktiviert | Zweck |
+| Service | activates | Purpose |
 |---|---|---|
-| `~/mode/trajectory` | `arm_0_joint_trajectory_controller` | MoveIt/Trajektorien (Default) |
-| `~/mode/freedrive` | `freedrive_mode_controller` | Hand-Führen / Trajektorien-Recording |
-| `~/mode/forward_position` | `forward_position_controller` | direkte Positions-Streams |
-| `~/mode/forward_velocity` | `forward_velocity_controller` | direkte Geschwindigkeits-Streams |
-| `~/mode/passthrough` | `passthrough_trajectory_controller` | Trajektorien-Streaming |
-| `~/release` | – | alle Command-Controller deaktivieren (Arm frei) |
-| `~/active` | – | aktiven Command-Controller melden |
+| `~/mode/trajectory` | `arm_0_joint_trajectory_controller` | MoveIt/trajectories (default) |
+| `~/mode/freedrive` | `freedrive_mode_controller` | hand-guiding / trajectory recording |
+| `~/mode/forward_position` | `forward_position_controller` | direct position streams |
+| `~/mode/forward_velocity` | `forward_velocity_controller` | direct velocity streams |
+| `~/mode/passthrough` | `passthrough_trajectory_controller` | trajectory streaming |
+| `~/release` | – | deactivate all command controllers (arm free) |
+| `~/active` | – | report the active command controller |
 
-Ein Umschalten aktiviert den Zielcontroller und **deaktiviert** die anderen
-Command-Controller, die gerade aktiv sind (über `switch_controller`, `STRICT`).
-Zusätzlich lädt das Launch die Broadcaster `force_torque_sensor_broadcaster`,
-`tcp_pose_broadcaster`, `speed_scaling_state_broadcaster` **aktiv** (kollidieren
-nicht). Die Controller-Params in `config/extra_controllers.yaml` sind 1:1 aus
-`ur_robot_driver/config/ur_controllers.yaml` übernommen (tf_prefix `arm_0_`).
+A switch activates the target controller and **deactivates** the other command controllers
+that are currently active (via `switch_controller`, `STRICT`).
+Additionally the launch loads the broadcasters `force_torque_sensor_broadcaster`,
+`tcp_pose_broadcaster`, `speed_scaling_state_broadcaster` **active** (they do not collide).
+The controller parameters in `config/extra_controllers.yaml` are taken 1:1 from
+`ur_robot_driver/config/ur_controllers.yaml` (tf_prefix `arm_0_`).
 
 ```bash
-# z. B. zum Trajektorien-Recording in FreeDrive
+# e.g. to record a trajectory in FreeDrive
 ros2 service call /a200_0553/manipulators/ur_controller_mode_manager/mode/freedrive std_srvs/srv/Trigger
-# ... aufzeichnen ... dann zurück:
+# ... record ... then back:
 ros2 service call /a200_0553/manipulators/ur_controller_mode_manager/mode/trajectory std_srvs/srv/Trigger
 ```
 
-### Recovery-Logik (`~/recover`)
+### Recovery logic (`~/recover`)
 
-Das komplette Safety-Handling steckt jetzt im `robot_state_helper` (aufgerufen aus
-`recover`/`ensure_ready` über ein `SetMode{RUNNING, stop_program, play_program}`-Goal):
+The complete safety handling now lives in `robot_state_helper` (called from
+`recover`/`ensure_ready` via a `SetMode{RUNNING, stop_program, play_program}` goal):
 
-| `safety_mode` | Behandlung durch `robot_state_helper` |
+| `safety_mode` | Handling by `robot_state_helper` |
 |---|---|
-| `NORMAL` / `REDUCED` | Keine Violation → direkt Mode-Transition bis `RUNNING`. |
-| `PROTECTIVE_STOP` | `unlock_protective_stop` (der **Adapter** wartet vorher ≥ 6 s, s. o.). |
-| `SAFEGUARD_STOP` | Wird durch physisches Reset aufgehoben; die Transition wartet darauf. |
-| `VIOLATION` / `FAULT` | `restart_safety` (Arm schaltet ab), danach Hochfahren bis `RUNNING`. |
-| `*_EMERGENCY_STOP` | Nicht per Software lösbar → Fehler im Result, E-Stop physisch entriegeln. |
+| `NORMAL` / `REDUCED` | No violation → direct mode transition up to `RUNNING`. |
+| `PROTECTIVE_STOP` | `unlock_protective_stop` (the **adapter** waits ≥ 6 s beforehand, see above). |
+| `SAFEGUARD_STOP` | Cleared by a physical reset; the transition waits for that. |
+| `VIOLATION` / `FAULT` | `restart_safety` (arm powers off), then boot up to `RUNNING`. |
+| `*_EMERGENCY_STOP` | Not clearable via software → error in the result, physically unlock the E-stop. |
 
-## Voraussetzungen
+## Prerequisites
 
-- Der `ur_robot_driver` läuft und ist mit dem UR5 verbunden.
-- Der `io_and_status_controller` ist geladen/aktiv (auf a200-0553 ohnehin für den RG6 nötig).
-  Der `robot_state_helper` abonniert daraus `robot_mode`/`safety_mode`/`robot_program_running`
-  und ruft `resend_robot_program`.
-- **Der `robot_state_helper`-Node läuft.** Clearpath startet ihn **nicht** mit; dieses Launch
-  startet ihn deshalb selbst (Node-Name `ur_robot_state_helper` im manipulators-Namespace).
-  Er öffnet eine **eigene** Primary-Interface-Verbindung zu `robot_ip:30001` für
-  `power_on`/`brake_release`/`unlock_protective_stop`. Prüfen mit
-  `ros2 action list | grep set_mode` bzw. `ros2 pkg executables ur_robot_driver | grep robot_state_helper`.
-- **Der `dashboard_client`-Node läuft.** Clearpath startet ihn im headless-Setup **nicht**
-  mit – `robot_state_helper` braucht daraus `restart_safety`/`play` (CB3), der Adapter
-  `get_safety_mode`. Dieses Launch startet ihn deshalb standardmäßig selbst mit
-  (`start_dashboard_client:=true`). Alternativ manuell:
+- The `ur_robot_driver` is running and connected to the UR5.
+- The `io_and_status_controller` is loaded/active (on a200-0553 it is needed for the RG6 anyway).
+  The `robot_state_helper` subscribes to `robot_mode`/`safety_mode`/`robot_program_running`
+  from it and calls `resend_robot_program`.
+- **The `robot_state_helper` node is running.** Clearpath does **not** start it; this launch
+  therefore starts it itself (node name `ur_robot_state_helper` in the manipulators namespace).
+  It opens its **own** primary-interface connection to `robot_ip:30001` for
+  `power_on`/`brake_release`/`unlock_protective_stop`. Check with
+  `ros2 action list | grep set_mode` or `ros2 pkg executables ur_robot_driver | grep robot_state_helper`.
+- **The `dashboard_client` node is running.** Clearpath does **not** start it in the headless
+  setup – `robot_state_helper` needs `restart_safety`/`play` (CB3) from it, the adapter
+  `get_safety_mode`. This launch therefore starts it by default
+  (`start_dashboard_client:=true`). Alternatively manually:
 
   ```bash
   ros2 run ur_robot_driver dashboard_client --ros-args \
@@ -132,38 +131,38 @@ Das komplette Safety-Handling steckt jetzt im `robot_state_helper` (aufgerufen a
     -p robot_ip:=192.168.131.40
   ```
 
-  Prüfen mit `ros2 service list | grep dashboard`.
+  Check with `ros2 service list | grep dashboard`.
 
-  > Auf a200-0553 startet der `husky-custom-setup`-Installer den `dashboard_client`
-  > optional als eigenen Boot-Service (`ur-dashboard.service`). Läuft er bereits darüber,
-  > dieses Launch mit `start_dashboard_client:=false` starten, damit nicht zwei
-  > Dashboard-Clients gleichzeitig auf Port 29999 verbinden.
-- `headless_mode: true` (Clearpath-Default auf a200-0553) → `robot_state_helper` sendet
-  ExternalControl per `io_and_status_controller/resend_robot_program`. Bei
-  `headless_mode: false` benutzt er stattdessen den Dashboard-`play`.
+  > On a200-0553 the `husky-custom-setup` installer optionally starts the `dashboard_client`
+  > as its own boot service (`ur-dashboard.service`). If it is already running through that,
+  > start this launch with `start_dashboard_client:=false` so that two dashboard clients do
+  > not connect to port 29999 at the same time.
+- `headless_mode: true` (Clearpath default on a200-0553) → `robot_state_helper` sends
+  ExternalControl via `io_and_status_controller/resend_robot_program`. With
+  `headless_mode: false` it uses the dashboard `play` instead.
 
-## Parameter
+## Parameters
 
-### `ur_state_manager` (Adapter)
+### `ur_state_manager` (adapter)
 
-| Parameter | Default | Bedeutung |
+| Parameter | Default | Meaning |
 |---|---|---|
-| `set_mode_action` | `/a200_0553/manipulators/ur_robot_state_helper/set_mode` | Action-Name des `robot_state_helper`. |
-| `dashboard_ns` | `/a200_0553/manipulators/dashboard_client` | Für `get_safety_mode` + `get_robot_mode` (CB3-Wartezeit / idempotenter `prepare`-Vorcheck). |
-| `io_status_ns` | `/a200_0553/manipulators/io_and_status_controller` | Für `robot_program_running` (ExternalControl aktiv? → idempotenter `prepare`-Vorcheck). |
-| `service_timeout` | `10.0` | Timeout beim Warten auf Action-Server/Service (s). |
-| `action_timeout` | `120.0` | Max. Wartezeit auf das `SetMode`-Ergebnis (Mode-Transition). |
-| `protective_stop_wait` | `6.0` | Wartezeit vor dem `SetMode`-Goal bei `PROTECTIVE_STOP` (CB3 ≥ 5 s). |
-| `auto_recover` | `true` | Watcher, der nach spätem Einschalten selbsttätig `recover` ausführt (s. o.). `false` → aus. |
-| `auto_recover_period` | `5.0` | Prüfintervall des Watchers (s). |
-| `auto_recover_settle` | `2` | So viele konsistente „muss recovern"-Beobachtungen vor dem Handeln (entprellt Boot-/`prepare`-Übergänge). |
+| `set_mode_action` | `/a200_0553/manipulators/ur_robot_state_helper/set_mode` | Action name of the `robot_state_helper`. |
+| `dashboard_ns` | `/a200_0553/manipulators/dashboard_client` | For `get_safety_mode` + `get_robot_mode` (CB3 wait time / idempotent `prepare` pre-check). |
+| `io_status_ns` | `/a200_0553/manipulators/io_and_status_controller` | For `robot_program_running` (ExternalControl active? → idempotent `prepare` pre-check). |
+| `service_timeout` | `10.0` | Timeout when waiting for action server/service (s). |
+| `action_timeout` | `120.0` | Max. wait time for the `SetMode` result (mode transition). |
+| `protective_stop_wait` | `6.0` | Wait time before the `SetMode` goal on `PROTECTIVE_STOP` (CB3 ≥ 5 s). |
+| `auto_recover` | `true` | Watcher that automatically runs `recover` after late power-on (see above). `false` → off. |
+| `auto_recover_period` | `5.0` | Check interval of the watcher (s). |
+| `auto_recover_settle` | `2` | This many consistent "must recover" observations before acting (debounces boot/`prepare` transitions). |
 
-### `ur_robot_state_helper` (aus `ur_robot_driver`, per Launch gestartet)
+### `ur_robot_state_helper` (from `ur_robot_driver`, started by the launch)
 
-| Parameter | Default (Launch) | Bedeutung |
+| Parameter | Default (launch) | Meaning |
 |---|---|---|
-| `robot_ip` | `192.168.131.40` | UR-Control-Box (Primary-Interface Port 30001). |
-| `headless_mode` | `true` | `true` → ExternalControl via `resend_robot_program`, sonst `play`. |
+| `robot_ip` | `192.168.131.40` | UR control box (primary interface port 30001). |
+| `headless_mode` | `true` | `true` → ExternalControl via `resend_robot_program`, otherwise `play`. |
 
 ## Build
 
@@ -174,52 +173,52 @@ colcon build --packages-select ur_state_manager
 source install/setup.bash
 ```
 
-`ur_dashboard_msgs` kommt mit dem `ur_robot_driver`-Stack (auf der a200-0553 vorhanden).
+`ur_dashboard_msgs` comes with the `ur_robot_driver` stack (present on the a200-0553).
 
-> Auf a200-0553 erledigt das der `husky-custom-setup`-Installer optional automatisch:
-> er klont+baut dieses Repo und installiert `ur-state-manager.service` (startet den
-> Manager beim Boot, `start_dashboard_client:=false`, da der `dashboard_client` über
-> `ur-dashboard.service` läuft).
+> On a200-0553 the `husky-custom-setup` installer optionally does this automatically:
+> it clones+builds this repo and installs `ur-state-manager.service` (starts the
+> manager at boot, `start_dashboard_client:=false`, since the `dashboard_client`
+> runs via `ur-dashboard.service`).
 
-## Starten
+## Starting
 
 ```bash
-# startet dashboard_client + robot_state_helper + ur_state_manager (Adapter)
+# starts dashboard_client + robot_state_helper + ur_state_manager (adapter)
 # robot_ip 192.168.131.40, headless_mode:=true
 ros2 launch ur_state_manager ur_state_manager.launch.py
 
-# falls der dashboard_client schon anderweitig laeuft:
+# if the dashboard_client is already running elsewhere:
 ros2 launch ur_state_manager ur_state_manager.launch.py start_dashboard_client:=false
 
-# oder nur den Adapter direkt (setzt voraus, dass robot_state_helper schon laeuft):
+# or just the adapter directly (requires robot_state_helper to already be running):
 ros2 run ur_state_manager state_manager --ros-args \
   -r __ns:=/a200_0553/manipulators \
   -p set_mode_action:=/a200_0553/manipulators/ur_robot_state_helper/set_mode \
   -p dashboard_ns:=/a200_0553/manipulators/dashboard_client
 ```
 
-## Benutzen
+## Using
 
 ```bash
-# Arm einsatzbereit machen (power on + brakes lösen + ExternalControl)
+# make the arm ready for operation (power on + release brakes + ExternalControl)
 ros2 service call /a200_0553/manipulators/ur_state_manager/prepare std_srvs/srv/Trigger
 
-# Nach Kollision / Protective-Stop wieder bereit machen
+# make ready again after a collision / protective-stop
 ros2 service call /a200_0553/manipulators/ur_state_manager/recover std_srvs/srv/Trigger
 
-# „mach einfach bereit, egal welcher Zustand"
+# "just make it ready, regardless of state"
 ros2 service call /a200_0553/manipulators/ur_state_manager/ensure_ready std_srvs/srv/Trigger
 
-# sicher abschalten
+# safely power off
 ros2 service call /a200_0553/manipulators/ur_state_manager/power_off std_srvs/srv/Trigger
 ```
 
-Jede Antwort liefert `success` (bool) und `message` (string) mit Klartext-Status.
-Es läuft immer nur **ein** Vorgang gleichzeitig (parallele Aufrufe werden mit
-`success=false` abgewiesen).
+Each response returns `success` (bool) and `message` (string) with a plain-text status.
+Only **one** operation runs at a time (parallel calls are rejected with
+`success=false`).
 
-## Hinweis zur Einbindung über `robot.yaml`
+## Note on integration via `robot.yaml`
 
-Damit der Workspace gefunden wird, muss er – wie `rg6_control` – unter
-`system.ros2.workspaces` in der `robot.yaml` eingetragen sein. Der Node lässt sich dann
-analog zu `rg6_bringup.launch.py` über `platform.extras.launch` mitstarten.
+For the workspace to be found, it must — like `rg6_control` — be listed under
+`system.ros2.workspaces` in the `robot.yaml`. The node can then be started alongside
+`rg6_bringup.launch.py` via `platform.extras.launch`.
