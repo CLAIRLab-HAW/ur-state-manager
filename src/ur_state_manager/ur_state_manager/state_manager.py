@@ -257,7 +257,15 @@ class StateManager(Node):
             return False, "SetMode: Timeout beim Senden des Goals"
         handle = send_fut.result()
         if not handle.accepted:
-            return False, "SetMode-Goal abgelehnt (laeuft schon ein Vorgang im robot_state_helper?)"
+            # Upstream (jazzy) lehnt NUR ab, wenn robot_mode/safety_mode noch
+            # UNKNOWN/UNDEFINED sind (Helper hat vom frisch gestarteten Treiber
+            # noch keine Statusdaten; unter rmw_zenoh dauert die Discovery ein
+            # paar Sekunden). Einen Busy-Check gibt es upstream nicht -
+            # konkurrierende Goals werden angenommen.
+            return False, ("SetMode-Goal abgelehnt - robot_state_helper vermutlich "
+                           "noch nicht ready (robot_mode/safety_mode noch nicht "
+                           "empfangen, z.B. direkt nach Stack-Restart); naechster "
+                           "Versuch heilt das i.d.R.")
 
         res_fut = handle.get_result_async()
         if not self._spin_future(res_fut, self.action_timeout):
