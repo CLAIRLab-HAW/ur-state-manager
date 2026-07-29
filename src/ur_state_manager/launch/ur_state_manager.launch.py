@@ -20,10 +20,12 @@ Per Launch-Argument ueberschreibbar.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 NS = "/a200_0553/manipulators"
 ROBOT_IP = "192.168.131.40"
@@ -34,6 +36,7 @@ def generate_launch_description():
     headless_mode = LaunchConfiguration("headless_mode")
     start_dashboard_client = LaunchConfiguration("start_dashboard_client")
     robot_ip = LaunchConfiguration("robot_ip")
+    load_arm_controllers = LaunchConfiguration("load_arm_controllers")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -51,6 +54,26 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "robot_ip", default_value=ROBOT_IP,
             description="IP der UR-Control-Box (Dashboard-Server Port 29999)."),
+        DeclareLaunchArgument(
+            "load_arm_controllers", default_value="true",
+            description="arm_controllers.launch.py mitstarten (Extra-Controller + "
+                        "Mode-Manager). Frueher eine eigene systemd-Unit "
+                        "(clearpath-custom-arm-controllers, 2026-07-29 abgeloest): "
+                        "gleicher Workspace, gleicher User, gleiche Abhaengigkeiten "
+                        "und identischer Lifecycle -> gehoert in denselben Launch."),
+
+        # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths
+        # Spawn-Schleife (clearpath_manipulators/launch/control.launch.py) spawnt jeden
+        # control.yaml-Node, dessen NAME 'controller' enthaelt -- und zwar immer AKTIV.
+        # Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
+        # Command-Controller dagegen aktiv und in Kollision mit dem
+        # arm_0_joint_trajectory_controller. Daher eigener Spawner-Launch.
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(PathJoinSubstitution([
+                FindPackageShare("ur_state_manager"), "launch",
+                "arm_controllers.launch.py"])),
+            condition=IfCondition(load_arm_controllers),
+        ),
 
         # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im
         # manipulators-Namespace -> Services landen unter
