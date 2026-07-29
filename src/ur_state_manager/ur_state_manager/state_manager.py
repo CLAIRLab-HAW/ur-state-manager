@@ -106,6 +106,23 @@ class StateManager(Node):
         io_status_ns = self.declare_parameter(
             "io_status_ns",
             "/a200_0553/manipulators/io_and_status_controller").value.rstrip("/")
+        # controller_mode_manager: nach einem erfolgreichen prepare/recover wird
+        # zusaetzlich der Trajectory-Modus aktiviert. Hintergrund: ein power_off
+        # stoppt das ExternalControl-Programm -> der Treiber meldet seine
+        # Command-Interfaces als nicht verfuegbar -> ros2_control MUSS jeden
+        # Controller deaktivieren, der sie beansprucht (im Log: "Successful
+        # 'deactivate' of hardware 'arm_0'" + "Deactivating controllers:
+        # [arm_0_joint_trajectory_controller]"). Beim Hochfahren aktiviert
+        # ros2_control ihn NICHT von selbst wieder. Ohne diesen Schritt bleibt der
+        # Arm also bestromt und verbunden, aber jede MoveIt-Ausfuehrung scheitert -
+        # ohne dass die Fehlermeldung auf den inaktiven Controller zeigt.
+        mode_manager_ns = self.declare_parameter(
+            "mode_manager_ns",
+            "/a200_0553/manipulators/ur_controller_mode_manager").value.rstrip("/")
+        self.trajectory_mode = self.declare_parameter(
+            "trajectory_mode", "trajectory").value
+        self.ensure_trajectory_mode = bool(self.declare_parameter(
+            "ensure_trajectory_mode", True).value)
 
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
         # Wie lange ein Mode-Uebergang (z.B. POWER_OFF -> RUNNING) dauern darf.
@@ -124,6 +141,9 @@ class StateManager(Node):
             GetSafetyMode, f"{dashboard_ns}/get_safety_mode", callback_group=self.cbg)
         self.cli_get_robot_mode = self.create_client(
             GetRobotMode, f"{dashboard_ns}/get_robot_mode", callback_group=self.cbg)
+        self.cli_trajectory_mode = self.create_client(
+            Trigger, f"{mode_manager_ns}/mode/{self.trajectory_mode}",
+            callback_group=self.cbg)
 
         # ExternalControl-Status (True = ROS-Programm laeuft) fuer den idempotenten
         # prepare-Vorcheck. Wird periodisch vom io_and_status_controller gepublisht;
@@ -276,17 +296,52 @@ class StateManager(Node):
     # ======================================================================
     # Ablaeufe (delegieren an robot_state_helper)
     # ======================================================================
+    def _ensure_trajectory_mode(self):
+        """Trajectory-Controller aktivieren (best effort, nie fatal).
+
+        Wird nach erfolgreichem prepare/recover gerufen. Idempotent: der
+        controller_mode_manager schaltet nur, wenn noetig. Schlaegt es fehl (Mode-
+        Manager nicht da, Timeout), wird nur gewarnt - der Arm ist dann bestromt
+        und verbunden, nur der Controller fehlt; das ist besser als ein prepare,
+        das deswegen als Fehler gilt."""
+        if not self.ensure_trajectory_mode:
+            return
+        if not self.cli_trajectory_mode.wait_for_service(timeout_sec=self.service_timeout):
+            self.get_logger().warn(
+                f"Trajectory-Modus: {self.cli_trajectory_mode.srv_name} nicht "
+                "erreichbar (laeuft der controller_mode_manager?) - der Arm ist "
+                "bereit, aber MoveIt-Ausfuehrung schlaegt fehl, bis der "
+                "arm_0_joint_trajectory_controller aktiv ist.")
+            return
+        fut = self.cli_trajectory_mode.call_async(Trigger.Request())
+        if not self._spin_future(fut, self.service_timeout):
+            self.get_logger().warn("Trajectory-Modus: Timeout beim Umschalten.")
+            return
+        res = fut.result()
+        if res.success:
+            self.get_logger().info(f"Trajectory-Modus aktiv ({res.message}).")
+        else:
+            self.get_logger().warn(f"Trajectory-Modus nicht gesetzt: {res.message}")
+
     def prepare(self):
-        """Arm einsatzbereit: RUNNING + ExternalControl (aus POWER_OFF hochfahren).
+        """Arm einsatzbereit: RUNNING + ExternalControl + Trajectory-Controller.
 
         Idempotent: ist der Arm schon einsatzbereit, wird sofort success=True
         gemeldet, OHNE den robot_state_helper zu benoetigen. So laeuft die Demo
         auch beim wiederholten Start (Arm bereits RUNNING) durch, selbst wenn der
         robot_state_helper gerade nicht erreichbar ist.
+
+        Der Trajectory-Modus wird in BEIDEN Faellen sichergestellt - auch im
+        Idempotenz-Zweig: nach einem power_off ist der Arm zwar schnell wieder
+        RUNNING, der Controller aber deaktiviert (s. Kommentar bei mode_manager_ns).
         """
         if self._already_ready():
+            self._ensure_trajectory_mode()
             return True, "bereits einsatzbereit (RUNNING, ExternalControl aktiv)"
-        return self._set_mode(RobotMode.RUNNING, stop_program=False, play_program=True)
+        ok, msg = self._set_mode(RobotMode.RUNNING, stop_program=False, play_program=True)
+        if ok:
+            self._ensure_trajectory_mode()
+        return ok, msg
 
     def recover(self):
         """Nach Safety-Violation wieder bereit: Programm stoppen, RUNNING, neu starten.
@@ -297,7 +352,10 @@ class StateManager(Node):
         (statt es einfach fortzusetzen).
         """
         self._wait_if_protective_stop()
-        return self._set_mode(RobotMode.RUNNING, stop_program=True, play_program=True)
+        ok, msg = self._set_mode(RobotMode.RUNNING, stop_program=True, play_program=True)
+        if ok:
+            self._ensure_trajectory_mode()
+        return ok, msg
 
     def power_off(self):
         """Arm sicher abschalten."""
