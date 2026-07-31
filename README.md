@@ -134,7 +134,7 @@ The complete safety handling now lives in `robot_state_helper` (called from
   Check with `ros2 service list | grep dashboard`.
 
   > On a200-0553 the `husky-custom-setup` installer optionally starts the `dashboard_client`
-  > as its own boot service (`ur-dashboard.service`). If it is already running through that,
+  > as its own boot service (`clearpath-custom-ur-dashboard.service`). If it is already running through that,
   > start this launch with `start_dashboard_client:=false` so that two dashboard clients do
   > not connect to port 29999 at the same time.
 - `headless_mode: true` (Clearpath default on a200-0553) → `robot_state_helper` sends
@@ -176,9 +176,9 @@ source install/setup.bash
 `ur_dashboard_msgs` comes with the `ur_robot_driver` stack (present on the a200-0553).
 
 > On a200-0553 the `husky-custom-setup` installer optionally does this automatically:
-> it clones+builds this repo and installs `ur-state-manager.service` (starts the
+> it clones+builds this repo and installs `clearpath-custom-ur-state-manager.service` (starts the
 > manager at boot, `start_dashboard_client:=false`, since the `dashboard_client`
-> runs via `ur-dashboard.service`).
+> runs via `clearpath-custom-ur-dashboard.service`).
 
 ## Starting
 
