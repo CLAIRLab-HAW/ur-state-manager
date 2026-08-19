@@ -22,7 +22,30 @@ It covers two tasks:
 > The node **does not move the arm** and does not send any trajectories. It only ensures
 > that the arm is powered, brakes are released, and it is ROS-controllable (ExternalControl active).
 
-## Provided Services (all `std_srvs/Trigger`)
+## Features
+
+- **A thin adapter over `robot_state_helper`** — the official state machine from
+  `ur_robot_driver`, behind a familiar `std_srvs/Trigger` API and the node name
+  `ur_state_manager`.
+- **Late power-on needs no operator**: a watcher detects "powered, but
+  ExternalControl off" and calls `recover`, which forces a *fresh*
+  ExternalControl start so the driver syncs `Command=actual` — no position jump,
+  no protective stop.
+- **CB3-aware**: a protective stop is only cleared after the 5 s the CB3
+  insists on, so `recover` does not fail on a robot that is merely not ready
+  yet.
+- **Controller modes** (`trajectory` / `freedrive` / …) through
+  `controller_mode_manager`, including the extra controllers loaded inactive.
+- **One operation at a time** — parallel calls are rejected rather than queued.
+- **Powering stays an operator decision**: `POWER_OFF`, `BOOTING` and
+  `BACKDRIVE` are left untouched.
+
+## Tech Stack
+
+ROS 2 Jazzy, `rclpy`, `ur_dashboard_msgs`, `ur_robot_driver`
+(`robot_state_helper`), `controller_manager_msgs`. UR5 CB3, PolyScope 3.15.8.
+
+### Provided Services (all `std_srvs/Trigger`)
 
 Each service translates into a `SetMode` goal to the `robot_state_helper`:
 
@@ -54,7 +77,7 @@ the OnRobot URCap, and no ROS service can power its tool connector (see
 > `dashboard_client/get_safety_mode` first and, on `PROTECTIVE_STOP`, wait briefly
 > (`protective_stop_wait`, default 6 s) **before** sending the goal.
 
-## Switching controllers per use case (`controller_mode_manager`)
+### Switching controllers per use case (`controller_mode_manager`)
 
 Second node + launch for **switching the arm controllers at runtime**. Idea: ONE
 `controller_manager` hosts all controllers; the mutually exclusive **command controllers**
@@ -109,7 +132,7 @@ The complete safety handling now lives in `robot_state_helper` (called from
 | `VIOLATION` / `FAULT` | `restart_safety` (arm powers off), then boot up to `RUNNING`. |
 | `*_EMERGENCY_STOP` | Not clearable via software → error in the result, physically unlock the E-stop. |
 
-## Prerequisites
+### Prerequisites
 
 - The `ur_robot_driver` is running and connected to the UR5.
 - The `io_and_status_controller` is loaded/active (on a200-0553 it is needed for the RG6 anyway).
@@ -141,7 +164,7 @@ The complete safety handling now lives in `robot_state_helper` (called from
   ExternalControl via `io_and_status_controller/resend_robot_program`. With
   `headless_mode: false` it uses the dashboard `play` instead.
 
-## Parameters
+### Parameters
 
 ### `ur_state_manager` (adapter)
 
@@ -164,7 +187,7 @@ The complete safety handling now lives in `robot_state_helper` (called from
 | `robot_ip` | `192.168.131.40` | UR control box (primary interface port 30001). |
 | `headless_mode` | `true` | `true` → ExternalControl via `resend_robot_program`, otherwise `play`. |
 
-## Build
+## Installation
 
 ```bash
 git clone https://github.com/CLAIRLab-HAW/ur-state-manager.git
@@ -180,7 +203,7 @@ source install/setup.bash
 > manager at boot, `start_dashboard_client:=false`, since the `dashboard_client`
 > runs via `clearpath-custom-ur-dashboard.service`).
 
-## Starting
+## Usage
 
 ```bash
 # starts dashboard_client + robot_state_helper + ur_state_manager (adapter)
@@ -197,7 +220,7 @@ ros2 run ur_state_manager state_manager --ros-args \
   -p dashboard_ns:=/a200_0553/manipulators/dashboard_client
 ```
 
-## Using
+### Using
 
 ```bash
 # make the arm ready for operation (power on + release brakes + ExternalControl)
@@ -217,7 +240,28 @@ Each response returns `success` (bool) and `message` (string) with a plain-text 
 Only **one** operation runs at a time (parallel calls are rejected with
 `success=false`).
 
-## Note on integration via `robot.yaml`
+### Note on integration via `robot.yaml`
 
 For the workspace to be found, it must be listed under
 `system.ros2.workspaces` in the `robot.yaml`. The node can then be started via `platform.extras.launch`.
+
+## Running Tests
+
+```bash
+colcon test --packages-select ur_state_manager
+```
+
+## Related
+
+- [husky-custom-setup](../husky-custom-setup/README.md) — the installer that
+  ships this as `clearpath-custom-ur-state-manager`
+- [plan-bridge](../../sdk/plan-bridge/README.md) — translates `/twin/arm_cmd`
+  into these services
+
+## Versioning
+
+[Semantic Versioning](https://semver.org/); see [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+See workspace root.
