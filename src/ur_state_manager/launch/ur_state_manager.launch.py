@@ -57,10 +57,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "load_arm_controllers", default_value="true",
             description="arm_controllers.launch.py mitstarten (Extra-Controller + "
-                        "Mode-Manager). Frueher eine eigene systemd-Unit "
-                        "(clearpath-custom-arm-controllers, 2026-07-29 abgeloest): "
-                        "gleicher Workspace, gleicher User, gleiche Abhaengigkeiten "
-                        "und identischer Lifecycle -> gehoert in denselben Launch."),
+                        "Mode-Manager). Bewusst hier und nicht in einer eigenen "
+                        "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
+                        "Abhaengigkeiten und identischer Lifecycle."),
 
         # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths
         # Spawn-Schleife (clearpath_manipulators/launch/control.launch.py) spawnt jeden

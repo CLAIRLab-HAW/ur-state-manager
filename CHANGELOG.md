@@ -4,6 +4,18 @@ Was sich wann geändert hat. Der aktuelle Stand steht in der [README](README.md)
 die Einbettung in den Onboard-Stack in
 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
 
+## 2026-08-19 (Greifer-Satz nachgezogen)
+
+- **Der `auto_recover`-Abschnitt versprach immer noch, der Greifer komme von
+  selbst mit hoch** -- "the `rg6_control` program edge pulls up tool power +
+  prime automatically". Diese Programmflanke gibt es nicht mehr: der RG6 haengt
+  an der OnRobot-URCap, und kein ROS-Service kann seine Tool-Versorgung setzen.
+  Der Satz ist beim vorigen Aufraeumen zwar angefasst worden (das "anymore"
+  fiel weg), die Tatsachenbehauptung darin blieb aber stehen.
+- Die Beschreibung von `load_arm_controllers` nannte die abgeloeste
+  systemd-Unit samt Datum. Warum der Launch das mitstartet, steht jetzt ohne
+  Vorgeschichte da; was einmal war, steht hier.
+
 ## 2026-07-29
 
 - Hochlauf-Verifikation im Adapter: nach jedem SetMode wird selbst geprüft

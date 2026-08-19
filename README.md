@@ -44,8 +44,9 @@ timer detects the state **"powered, but ExternalControl off"** (`robot_mode` ∈
 `recover`. Deliberately `recover` (not `prepare`): `stop_program=True` forces a **fresh**
 ExternalControl start → the driver syncs `Command=actual` → **no position jump/protective
 stop**, unlike a mere `prepare`/`play` that resumes the paused state with a stale command.
-Afterwards the `rg6_control` program edge pulls up tool power + prime automatically — late
-power-on thus needs **no manual intervention**. Only powered states are touched;
+That restores the arm's motion link; the **gripper** is not part of it — the RG6 hangs off
+the OnRobot URCap, and no ROS service can power its tool connector (see
+[`onrobot-rg6`](../onrobot-rg6/README.md)). Only powered states are touched;
 `POWER_OFF`/`BOOTING`/`BACKDRIVE` are left untouched. Disable with `auto_recover:=false`.
 
 > **CB3 special case:** `robot_state_helper` clears a protective stop *immediately*, but the
