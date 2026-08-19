@@ -3,11 +3,10 @@
 Manages the state of an **already connected** UR5 (CB3) on the `a200-0553`:
 make the arm ready for operation and restore it after a safety violation.
 
-> **Refactor (2026-07):** The former custom mode/safety state machine has been replaced by the
-> official **`robot_state_helper`** from the `ur_robot_driver`. This node is now just a **thin
-> adapter**: it keeps the familiar `std_srvs/Trigger` API and the node name `ur_state_manager`
-> (nothing downstream breaks) and delegates to the `ur_dashboard_msgs/action/SetMode` action of
-> the `robot_state_helper`.
+> **A thin adapter over `robot_state_helper`.** The state machine itself is the official
+> **`robot_state_helper`** from the `ur_robot_driver`; this node keeps the familiar
+> `std_srvs/Trigger` API and the node name `ur_state_manager` and delegates to the
+> `ur_dashboard_msgs/action/SetMode` action of the `robot_state_helper`.
 >
 > The `robot_state_helper` handles `power_on` → `brake_release` → `RUNNING`,
 > `unlock_protective_stop`, `restart_safety` on `VIOLATION`/`FAULT`, as well as
@@ -46,7 +45,7 @@ timer detects the state **"powered, but ExternalControl off"** (`robot_mode` ∈
 ExternalControl start → the driver syncs `Command=actual` → **no position jump/protective
 stop**, unlike a mere `prepare`/`play` that resumes the paused state with a stale command.
 Afterwards the `rg6_control` program edge pulls up tool power + prime automatically — late
-power-on thus needs **no manual intervention** anymore. Only powered states are touched;
+power-on thus needs **no manual intervention**. Only powered states are touched;
 `POWER_OFF`/`BOOTING`/`BACKDRIVE` are left untouched. Disable with `auto_recover:=false`.
 
 > **CB3 special case:** `robot_state_helper` clears a protective stop *immediately*, but the
@@ -219,6 +218,5 @@ Only **one** operation runs at a time (parallel calls are rejected with
 
 ## Note on integration via `robot.yaml`
 
-For the workspace to be found, it must — like `rg6_control` — be listed under
-`system.ros2.workspaces` in the `robot.yaml`. The node can then be started alongside
-`rg6_bringup.launch.py` via `platform.extras.launch`.
+For the workspace to be found, it must be listed under
+`system.ros2.workspaces` in the `robot.yaml`. The node can then be started via `platform.extras.launch`.

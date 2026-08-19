@@ -232,7 +232,9 @@ class StateManager(Node):
         # -> RUNNING + frisches ExternalControl. recover nutzt stop_program=True (sauberer
         # Neustart -> Treiber sync't Command=Ist -> KEIN Positionssprung/Protective-Stop,
         # anders als ein blosses prepare/play, das den Paused-Stand mit stale Command
-        # fortsetzt). Danach zieht die rg6_control-Programm-Flanke Tool-Power + Prime nach.
+        # fortsetzt). Den Greifer betrifft das seit 2026-08-19 nicht mehr: er haengt
+        # an der OnRobot-URCap, nicht am Tool-Anschluss, und braucht weder
+        # Tool-Power aus ROS noch ein Priming auf der Programm-Flanke.
         # auto_recover=false schaltet den Automatismus ab.
         self.auto_recover = bool(self.declare_parameter("auto_recover", True).value)
         self.auto_recover_period = float(
