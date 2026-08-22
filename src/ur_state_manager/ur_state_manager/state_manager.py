@@ -1,69 +1,59 @@
 #!/usr/bin/env python3
 """Duenner Adapter auf den offiziellen 'robot_state_helper' (ur_robot_driver).
 
-Frueher enthielt diese Datei eine eigene Mode-/Safety-Zustandsmaschine. Die ist
-jetzt durch den gepflegten 'robot_state_helper' aus dem ur_robot_driver ersetzt.
-Dieser Node ist nur noch ein *Adapter*: er behaelt die gewohnte
+Dieser Node ist ein *Adapter*: er behaelt die gewohnte
 std_srvs/Trigger-API (prepare / recover / ensure_ready / power_off) und den
-Node-Namen 'ur_state_manager' bei, damit bestehende Aufrufer (ur-state-manager
-.service, Skripte, robot.yaml-Integration) unveraendert weiterlaufen, und
-delegiert die eigentliche Arbeit an dessen ur_dashboard_msgs/action/SetMode-Action.
+Node-Namen 'ur_state_manager' bei, damit bestehende Aufrufer unveraendert
+weiterlaufen, und delegiert die Arbeit an die SetMode-Action des
+robot_state_helper.
 
-Was robot_state_helper alles selbst macht (und wir daher NICHT mehr nachbauen):
-  * power_on -> brake_release -> RUNNING (schrittweise Mode-Transition),
-  * unlock_protective_stop bei PROTECTIVE_STOP,
-  * restart_safety bei VIOLATION / FAULT,
-  * ExternalControl (re)starten: headless_mode -> resend_robot_program, sonst play,
-  * E-Stop wird nur gemeldet (nicht per Software loesbar).
+Was robot_state_helper selbst macht und hier NICHT nachgebaut wird:
+power_on -> brake_release -> RUNNING, unlock_protective_stop bei
+PROTECTIVE_STOP, restart_safety bei VIOLATION/FAULT, ExternalControl
+(re)starten.  E-Stop wird nur gemeldet, nicht per Software geloest.
 
 Einzige Zutat, die robot_state_helper NICHT kennt: die CB3-Pflicht, nach einem
 Protective-Stop >=5 s zu warten, bevor unlock_protective_stop akzeptiert wird.
-robot_state_helper unlockt sofort -> auf dem CB3 kann das fehlschlagen. Deshalb
-liest 'recover'/'ensure_ready' vorher den safety_mode (Dashboard-Client) und
-wartet ggf. kurz, BEVOR das SetMode-Goal (das intern sofort unlockt) rausgeht.
+Er unlockt sofort -> auf dem CB3 kann das fehlschlagen.  Deshalb liest
+'recover'/'ensure_ready' vorher den safety_mode und wartet ggf. kurz, BEVOR das
+SetMode-Goal hinausgeht.
 
-Vier Zutaten gegen die Restart-/Erstbestromungs-Fallen (2026-07-29, a200-0553):
+Vier Zutaten gegen die Restart-/Erstbestromungs-Fallen (a200-0553):
 
-* VERIFIKATION + RETRY: Beim ERSTEN Bremsenloesen, nachdem der Arm eine Weile
-  stromlos war, wirft die CB3 haeufig einen Protective Stop oder FAULT aus der
-  eigenen Anlauf-Prozedur (C153A3/C204A1 bzw. C39/C193 "beim Loesen sackt ein
-  Gelenk ueber die Toleranz"), BEVOR ROS irgendetwas streamt; der zweite Anlauf
-  laeuft danach zuverlaessig durch. robot_state_helper merkt davon nichts: sein
-  SetMode-Goal meldet success, sobald RUNNING erreicht und play/resend abgesetzt
-  ist - der P-Stop faellt in die Luecke dazwischen. Deshalb prueft dieser Adapter
-  nach jedem SetMode selbst (RUNNING + Safety NORMAL/REDUCED + ExternalControl
-  laeuft) und wiederholt den Hochlauf bei Bedarf (bringup_attempts, Default 3).
+* VERIFIKATION + RETRY: Beim ERSTEN Bremsenloesen nach laengerer Stromlosigkeit
+  wirft die CB3 haeufig einen Protective Stop oder FAULT aus ihrer eigenen
+  Anlauf-Prozedur, BEVOR ROS irgendetwas streamt; der zweite Anlauf laeuft
+  zuverlaessig durch.  robot_state_helper merkt davon nichts -- sein Goal meldet
+  success, sobald RUNNING erreicht und play/resend abgesetzt ist, der P-Stop
+  faellt in die Luecke dazwischen.  Deshalb prueft dieser Adapter nach jedem
+  SetMode selbst (RUNNING + Safety NORMAL/REDUCED + ExternalControl laeuft) und
+  wiederholt den Hochlauf (bringup_attempts, Default 3).
 * HELPER-PRIMING: robot_state_helper abonniert robot_mode/safety_mode
   BEST_EFFORT+VOLATILE; der GPIOController publiziert TRANSIENT_LOCAL und nur
-  bei AENDERUNG. Nach einem Restart nur dieses Services (ohne Treiber-Restart)
-  bleibt der Helper daher blind ("Robot mode is unknown") und lehnt jedes Goal
-  ab - es publiziert ja niemand neu. Vor jedem Goal publiziert dieser Adapter
-  den per Dashboard gelesenen Ist-Stand EINMAL (VOLATILE, latcht nichts) auf
-  dieselben Topics und macht den Helper damit deterministisch sehend.
+  bei AENDERUNG.  Nach einem Restart nur dieses Services bleibt der Helper
+  blind ("Robot mode is unknown") und lehnt jedes Goal ab -- es publiziert ja
+  niemand neu.  Vor jedem Goal publiziert dieser Adapter den per Dashboard
+  gelesenen Ist-Stand EINMAL auf dieselben Topics.
 * CONTROLLER-RELEASE vor dem Mode-Zyklus: Nach einem manipulators-Restart ist
-  der arm_0_joint_trajectory_controller aktiv, sein Halteziel stammt aber von
-  VOR dem Bestromen (Bremsen zu). Startet ExternalControl mit diesem stale
-  Haltewert, streamt der Treiber sofort dorthin -> Positionssprung. Release vor
-  dem Hochlauf + frisches Aktivieren danach (_ensure_trajectory_mode) schliesst
-  die Luecke.
+  der Trajectory-Controller aktiv, sein Halteziel stammt aber von VOR dem
+  Bestromen.  Startet ExternalControl mit diesem stale Haltewert, streamt der
+  Treiber sofort dorthin -> Positionssprung.  Release vor dem Hochlauf +
+  frisches Aktivieren danach schliesst die Luecke.
 * LATCHED-QoS + DASHBOARD-FALLBACK: robot_program_running kommt
-  TRANSIENT_LOCAL und nur bei Aenderung -> Subscription hier ebenfalls
-  TRANSIENT_LOCAL. Unter rmw_zenoh kommt der latched Wert bei Late-Joinern
-  trotzdem NICHT zuverlaessig an (empirisch; nur Live-Aenderungen) -> solange
-  das Topic nichts geliefert hat, springt der Dashboard-Server ein
-  ('program_running'; im headless-Betrieb ist das ExternalControl-Skript das
-  laufende Programm). Ohne beides waeren Vorcheck, Verifikation und
-  Auto-Recovery nach jedem Adapter-Restart blind (_program_running=None).
+  TRANSIENT_LOCAL und nur bei Aenderung -> Subscription hier ebenfalls.  Unter
+  rmw_zenoh kommt der latched Wert bei Late-Joinern trotzdem NICHT zuverlaessig
+  an -> solange das Topic nichts geliefert hat, springt der Dashboard-Server
+  ein.  Ohne beides waeren Vorcheck, Verifikation und Auto-Recovery nach jedem
+  Adapter-Restart blind.
 
 Mapping der Trigger-Services auf SetMode-Goals:
   ~/prepare       [idempotent] SetMode{RUNNING, stop_program=false, play_program=true}
-                  Vorcheck: ist der Arm schon RUNNING + ExternalControl aktiv +
-                  Safety NORMAL/REDUCED, gibt es nichts zu tun -> success=True OHNE
-                  robot_state_helper (wichtig fuers wiederholte Starten der Demo).
-                  Retries laufen als recover (stop_program=true, sauberer Neustart).
+                  Vorcheck: schon RUNNING + ExternalControl + Safety ok ->
+                  success=True OHNE robot_state_helper.  Retries laufen als
+                  recover (stop_program=true, sauberer Neustart).
   ~/recover       [pstop-wait] SetMode{RUNNING, stop_program=true, play_program=true}
-  ~/ensure_ready  wie recover (SetMode macht ohnehin "whatever it takes")
-  ~/power_off     SetMode{POWER_OFF, stop_program=true,  play_program=false}
+  ~/ensure_ready  wie recover
+  ~/power_off     SetMode{POWER_OFF, stop_program=true, play_program=false}
 
 Alle Namen sind Parameter (Defaults passen zu a200-0553).
 """
@@ -143,15 +133,14 @@ class StateManager(Node):
             "io_status_ns",
             "/a200_0553/manipulators/io_and_status_controller").value.rstrip("/")
         # controller_mode_manager: nach einem erfolgreichen prepare/recover wird
-        # zusaetzlich der Trajectory-Modus aktiviert. Hintergrund: ein power_off
-        # stoppt das ExternalControl-Programm -> der Treiber meldet seine
+        # zusaetzlich der Trajectory-Modus aktiviert.  Ein power_off stoppt das
+        # ExternalControl-Programm -> der Treiber meldet seine
         # Command-Interfaces als nicht verfuegbar -> ros2_control MUSS jeden
-        # Controller deaktivieren, der sie beansprucht (im Log: "Successful
-        # 'deactivate' of hardware 'arm_0'" + "Deactivating controllers:
-        # [arm_0_joint_trajectory_controller]"). Beim Hochfahren aktiviert
-        # ros2_control ihn NICHT von selbst wieder. Ohne diesen Schritt bleibt der
-        # Arm also bestromt und verbunden, aber jede MoveIt-Ausfuehrung scheitert -
-        # ohne dass die Fehlermeldung auf den inaktiven Controller zeigt.
+        # Controller deaktivieren, der sie beansprucht.  Beim Hochfahren
+        # aktiviert ros2_control ihn NICHT von selbst wieder: ohne diesen
+        # Schritt bleibt der Arm bestromt und verbunden, aber jede
+        # MoveIt-Ausfuehrung scheitert -- ohne dass die Fehlermeldung auf den
+        # inaktiven Controller zeigt.
         mode_manager_ns = self.declare_parameter(
             "mode_manager_ns",
             "/a200_0553/manipulators/ur_controller_mode_manager").value.rstrip("/")
@@ -226,16 +215,14 @@ class StateManager(Node):
         self.create_service(Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg)
 
         # ---- Auto-Recovery-Watcher (spaetes Einschalten des Arms) ----------
-        # Wird der UR erst NACH dem Boot bestromt, laeuft ExternalControl nicht an
-        # (Teach-Panel "Paused", Arm ohne Feedback, Greifer stromlos). Dieser Watcher
-        # erkennt "bestromt, aber ExternalControl aus" und ruft selbsttaetig recover
-        # -> RUNNING + frisches ExternalControl. recover nutzt stop_program=True (sauberer
-        # Neustart -> Treiber sync't Command=Ist -> KEIN Positionssprung/Protective-Stop,
-        # anders als ein blosses prepare/play, das den Paused-Stand mit stale Command
-        # fortsetzt). Den Greifer betrifft das seit 2026-08-19 nicht mehr: er haengt
-        # an der OnRobot-URCap, nicht am Tool-Anschluss, und braucht weder
-        # Tool-Power aus ROS noch ein Priming auf der Programm-Flanke.
-        # auto_recover=false schaltet den Automatismus ab.
+        # Wird der UR erst NACH dem Boot bestromt, laeuft ExternalControl nicht
+        # an (Teach-Panel "Paused", Arm ohne Feedback).  Dieser Watcher erkennt
+        # "bestromt, aber ExternalControl aus" und ruft selbsttaetig recover.
+        # recover nutzt stop_program=True (sauberer Neustart -> Treiber sync't
+        # Command=Ist -> KEIN Positionssprung, anders als ein blosses
+        # prepare/play, das den Paused-Stand mit stale Command fortsetzt).  Den
+        # Greifer betrifft das nicht: er haengt an der OnRobot-URCap, nicht am
+        # Tool-Anschluss.  auto_recover=false schaltet den Automatismus ab.
         self.auto_recover = bool(self.declare_parameter("auto_recover", True).value)
         self.auto_recover_period = float(
             self.declare_parameter("auto_recover_period", 5.0).value)
@@ -530,13 +517,13 @@ class StateManager(Node):
         """Arm einsatzbereit: RUNNING + ExternalControl + Trajectory-Controller.
 
         Idempotent: ist der Arm schon einsatzbereit, wird sofort success=True
-        gemeldet, OHNE den robot_state_helper zu benoetigen. So laeuft die Demo
-        auch beim wiederholten Start (Arm bereits RUNNING) durch, selbst wenn der
-        robot_state_helper gerade nicht erreichbar ist.
+        gemeldet, OHNE den robot_state_helper -- so laeuft die Demo auch beim
+        wiederholten Start durch, selbst wenn der Helper gerade nicht
+        erreichbar ist.
 
-        Der Trajectory-Modus wird in BEIDEN Faellen sichergestellt - auch im
-        Idempotenz-Zweig: nach einem power_off ist der Arm zwar schnell wieder
-        RUNNING, der Controller aber deaktiviert (s. Kommentar bei mode_manager_ns).
+        Der Trajectory-Modus wird in BEIDEN Faellen sichergestellt, auch im
+        Idempotenz-Zweig: nach einem power_off ist der Arm schnell wieder
+        RUNNING, der Controller aber deaktiviert.
         """
         if self._already_ready():
             self._ensure_trajectory_mode()
