@@ -135,7 +135,7 @@ The complete safety handling now lives in `robot_state_helper` (called from
 ### Prerequisites
 
 - The `ur_robot_driver` is running and connected to the UR5.
-- The `io_and_status_controller` is loaded/active (on a200-0553 it is needed for the RG6 anyway).
+- The `io_and_status_controller` is loaded/active — needed by the `robot_state_helper`, not by the gripper: since the URCap switch the RG6 is commanded over XML-RPC and no longer rides on a tool digital output (see [`onrobot-rg6`](../onrobot-rg6/README.md)).
   The `robot_state_helper` subscribes to `robot_mode`/`safety_mode`/`robot_program_running`
   from it and calls `resend_robot_program`.
 - **The `robot_state_helper` node is running.** Clearpath does **not** start it; this launch

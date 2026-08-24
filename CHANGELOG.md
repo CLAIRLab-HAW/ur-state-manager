@@ -9,6 +9,16 @@ die Versionierung [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+- **Die Voraussetzungsliste begruendete den `io_and_status_controller` mit dem
+  Greifer** -- "on a200-0553 it is needed for the RG6 anyway". Das stammt aus
+  der Tool-DO-Zeit. Seit dem URCap-Umstieg kommandiert `rg6_grip_bridge` den
+  RG6 per XML-RPC, kein Tool-Ausgang ist mehr beteiligt. Gebraucht wird der
+  Controller vom `robot_state_helper` -- was der naechste Satz ohnehin schon
+  sagte. Am 2026-08-24 im Zuge einer Durchsicht nach Tool-DO-Resten gefunden;
+  im Code selbst gab es keine: `state_manager.py` fasst den Greifer nirgends
+  an, und `extra_controllers.yaml` spawnt keinen Greifer-Controller.
+
+
 ## [0.2.0] - 2026-08-19 (Greifer-Satz nachgezogen)
 
 - **Der `auto_recover`-Abschnitt versprach immer noch, der Greifer komme von
