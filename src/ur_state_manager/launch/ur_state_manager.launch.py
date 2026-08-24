@@ -15,8 +15,8 @@ Drei Nodes:
     Trigger-API (prepare/recover/ensure_ready/power_off) und delegiert an die
     SetMode-Action des robot_state_helper.
 
-Defaults passen zum UR5 (CB3) auf a200-0553 (headless_mode, manipulators-Namespace).
-Per Launch-Argument ueberschreibbar.
+Defaults passen zum UR5 (CB3) auf a200-0553 (headless_mode, manipulators-Namespace). Per Launch-Argument
+ueberschreibbar.
 """
 
 from launch import LaunchDescription
@@ -67,21 +67,19 @@ def generate_launch_description():
                 "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
                 "Abhaengigkeiten und identischer Lifecycle.",
             ),
-            # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths
-            # Spawn-Schleife (clearpath_manipulators/launch/control.launch.py) spawnt jeden
-            # control.yaml-Node, dessen NAME 'controller' enthaelt -- und zwar immer AKTIV.
-            # Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
-            # Command-Controller dagegen aktiv und in Kollision mit dem
-            # arm_0_joint_trajectory_controller. Daher eigener Spawner-Launch.
+            # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths Spawn-Schleife
+            # (clearpath_manipulators/launch/control.launch.py) spawnt jeden control.yaml-Node, dessen NAME 'controller'
+            # enthaelt -- und zwar immer AKTIV. Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
+            # Command-Controller dagegen aktiv und in Kollision mit dem arm_0_joint_trajectory_controller. Daher eigener
+            # Spawner-Launch.
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([FindPackageShare("ur_state_manager"), "launch", "arm_controllers.launch.py"])
                 ),
                 condition=IfCondition(load_arm_controllers),
             ),
-            # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im
-            # manipulators-Namespace -> Services landen unter
-            # /a200_0553/manipulators/dashboard_client/* (= Default dashboard_ns).
+            # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im manipulators-Namespace -> Services
+            # landen unter /a200_0553/manipulators/dashboard_client/* (= Default dashboard_ns).
             Node(
                 package="ur_robot_driver",
                 executable="dashboard_client",

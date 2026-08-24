@@ -9,9 +9,8 @@ und startet den Controller-Mode-Manager (a200-0553).
   2. ur_controller_mode_manager: schaltet zur Laufzeit per Trigger-Service zwischen
      den Modi um (trajectory/freedrive/forward_*/passthrough).
 
-Der Basis-Satz (joint_state_broadcaster, arm_0_joint_trajectory_controller,
-io_and_status_controller) wird von Clearpath aus der robot.yaml gespawnt und hier
-NICHT angefasst.
+Der Basis-Satz (joint_state_broadcaster, arm_0_joint_trajectory_controller, io_and_status_controller) wird von Clearpath
+aus der robot.yaml gespawnt und hier NICHT angefasst.
 
 WARUM EIN WRAPPER STATT SIEBEN PARALLELER spawner-Nodes
 -------------------------------------------------------
@@ -24,15 +23,13 @@ Beim Neustart von clearpath-manipulators passiert das NICHT: dort ist der CM
 frisch und leer, die Spawner laden zum ersten Mal -- das funktioniert auch bei
 stromlosem Arm.
 
-Der Unterschied ist also das **Re-Spawnen bereits geladener** Controller, nicht
-der Stromzustand. (Ein Gate auf den Hardware-Zustand hilft nicht: die Komponente
-meldet 'label=active' auch bei POWER_OFF -- 'active' heisst nur "Treiber liest
-ueber RTDE".)
+Der Unterschied ist also das **Re-Spawnen bereits geladener** Controller, nicht der Stromzustand. (Ein Gate auf den
+Hardware-Zustand hilft nicht: die Komponente meldet 'label=active' auch bei POWER_OFF -- 'active' heisst nur "Treiber
+liest ueber RTDE".)
 
-Deshalb: erst 'ros2 control list_controllers' abfragen, dann nur die fehlenden
-spawnen. Ist alles schon da, passiert nichts -- der Restart wird zum No-op statt
-zum Absturz. Sequenziell statt parallel, damit die Abfrage nicht mit den eigenen
-Spawns kollidiert.
+Deshalb: erst 'ros2 control list_controllers' abfragen, dann nur die fehlenden spawnen. Ist alles schon da, passiert
+nichts -- der Restart wird zum No-op statt zum Absturz. Sequenziell statt parallel, damit die Abfrage nicht mit den
+eigenen Spawns kollidiert.
 """
 
 from launch import LaunchDescription
@@ -47,8 +44,8 @@ CONTROLLER_MANAGER = NS + "/controller_manager"
 # Aktiv geladene Broadcaster (kollidieren nicht mit dem jtc).
 BROADCASTERS = ["force_torque_sensor_broadcaster", "tcp_pose_broadcaster", "speed_scaling_state_broadcaster"]
 
-# Command-Controller, die --inactive geladen werden (Reihenfolge egal).
-# Muss zu den Typ-Eintraegen in config/extra_controllers.yaml passen.
+# Command-Controller, die --inactive geladen werden (Reihenfolge egal). Muss zu den Typ-Eintraegen in
+# config/extra_controllers.yaml passen.
 COMMAND_CONTROLLERS = [
     "forward_position_controller",
     "forward_velocity_controller",

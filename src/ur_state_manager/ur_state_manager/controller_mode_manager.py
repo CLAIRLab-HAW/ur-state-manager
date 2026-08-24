@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Schaltet die Arm-Controller pro Anwendungsfall um (UR5 auf a200-0553).
 
-Idee (siehe Architektur): EIN controller_manager hostet alle Controller; die
-Command-Controller (die dieselben Command-Interfaces beanspruchen und sich daher
-gegenseitig ausschliessen) liegen meist INAKTIV und werden zur Laufzeit per
-switch_controller aktiviert. Dieser Node bietet je einen std_srvs/Trigger-Service
-pro "Modus" an; ein Aufruf aktiviert den Zielcontroller und deaktiviert die anderen
-Command-Controller, die gerade aktiv sind.
+Idee (siehe Architektur): EIN controller_manager hostet alle Controller; die Command-Controller (die dieselben
+Command-Interfaces beanspruchen und sich daher gegenseitig ausschliessen) liegen meist INAKTIV und werden zur Laufzeit
+per switch_controller aktiviert. Dieser Node bietet je einen std_srvs/Trigger-Service pro "Modus" an; ein Aufruf
+aktiviert den Zielcontroller und deaktiviert die anderen Command-Controller, die gerade aktiv sind.
 
 Beispiel-Modi (Default, per Parameter ueberschreibbar):
   trajectory        -> arm_0_joint_trajectory_controller   (Default; MoveIt/Trajektorien)
@@ -20,11 +18,11 @@ Services (im Node-Namespace, z.B. /a200_0553/manipulators/ur_controller_mode_man
   ~/release       (std_srvs/Trigger)  -> alle Command-Controller deaktivieren (Arm frei)
   ~/active        (std_srvs/Trigger)  -> aktuell aktive(n) Command-Controller melden
 
-Broadcaster (joint_state_broadcaster, io_and_status_controller, ft/tcp/speed_scaling)
-sind NICHT Teil der exklusiven Gruppe und bleiben unangetastet aktiv.
+Broadcaster (joint_state_broadcaster, io_and_status_controller, ft/tcp/speed_scaling) sind NICHT Teil der exklusiven
+Gruppe und bleiben unangetastet aktiv.
 
-Voraussetzung: die genannten Controller sind im controller_manager geladen (aktiv
-ODER inaktiv) - siehe arm_controllers.launch.py / config/extra_controllers.yaml.
+Voraussetzung: die genannten Controller sind im controller_manager geladen (aktiv ODER inaktiv) - siehe
+arm_controllers.launch.py / config/extra_controllers.yaml.
 """
 
 import threading

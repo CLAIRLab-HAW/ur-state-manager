@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """Duenner Adapter auf den offiziellen 'robot_state_helper' (ur_robot_driver).
 
-Dieser Node ist ein *Adapter*: er behaelt die gewohnte
-std_srvs/Trigger-API (prepare / recover / ensure_ready / power_off) und den
-Node-Namen 'ur_state_manager' bei, damit bestehende Aufrufer unveraendert
-weiterlaufen, und delegiert die Arbeit an die SetMode-Action des
-robot_state_helper.
+Dieser Node ist ein *Adapter*: er behaelt die gewohnte std_srvs/Trigger-API (prepare / recover / ensure_ready /
+power_off) und den Node-Namen 'ur_state_manager' bei, damit bestehende Aufrufer unveraendert weiterlaufen, und delegiert
+die Arbeit an die SetMode-Action des robot_state_helper.
 
-Was robot_state_helper selbst macht und hier NICHT nachgebaut wird:
-power_on -> brake_release -> RUNNING, unlock_protective_stop bei
-PROTECTIVE_STOP, restart_safety bei VIOLATION/FAULT, ExternalControl
-(re)starten.  E-Stop wird nur gemeldet, nicht per Software geloest.
+Was robot_state_helper selbst macht und hier NICHT nachgebaut wird: power_on -> brake_release -> RUNNING,
+unlock_protective_stop bei PROTECTIVE_STOP, restart_safety bei VIOLATION/FAULT, ExternalControl (re)starten.  E-Stop
+wird nur gemeldet, nicht per Software geloest.
 
-Einzige Zutat, die robot_state_helper NICHT kennt: die CB3-Pflicht, nach einem
-Protective-Stop >=5 s zu warten, bevor unlock_protective_stop akzeptiert wird.
-Er unlockt sofort -> auf dem CB3 kann das fehlschlagen.  Deshalb liest
-'recover'/'ensure_ready' vorher den safety_mode und wartet ggf. kurz, BEVOR das
-SetMode-Goal hinausgeht.
+Einzige Zutat, die robot_state_helper NICHT kennt: die CB3-Pflicht, nach einem Protective-Stop >=5 s zu warten, bevor
+unlock_protective_stop akzeptiert wird. Er unlockt sofort -> auf dem CB3 kann das fehlschlagen.  Deshalb liest
+'recover'/'ensure_ready' vorher den safety_mode und wartet ggf. kurz, BEVOR das SetMode-Goal hinausgeht.
 
 Vier Zutaten gegen die Restart-/Erstbestromungs-Fallen (a200-0553):
 
@@ -121,25 +116,21 @@ class StateManager(Node):
         self.set_mode_action = self.declare_parameter(
             "set_mode_action", "/a200_0553/manipulators/ur_robot_state_helper/set_mode"
         ).value
-        # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig;
-        # zusaetzlich fuer den idempotenten prepare-Vorcheck (get_robot_mode).
+        # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig; zusaetzlich fuer den idempotenten
+        # prepare-Vorcheck (get_robot_mode).
         dashboard_ns = self.declare_parameter("dashboard_ns", "/a200_0553/manipulators/dashboard_client").value.rstrip(
             "/"
         )
-        # io_and_status_controller: liefert robot_program_running (ExternalControl aktiv?)
-        # fuer den idempotenten prepare-Vorcheck.
+        # io_and_status_controller: liefert robot_program_running (ExternalControl aktiv?) fuer den idempotenten
+        # prepare-Vorcheck.
         io_status_ns = self.declare_parameter(
             "io_status_ns", "/a200_0553/manipulators/io_and_status_controller"
         ).value.rstrip("/")
-        # controller_mode_manager: nach einem erfolgreichen prepare/recover wird
-        # zusaetzlich der Trajectory-Modus aktiviert.  Ein power_off stoppt das
-        # ExternalControl-Programm -> der Treiber meldet seine
-        # Command-Interfaces als nicht verfuegbar -> ros2_control MUSS jeden
-        # Controller deaktivieren, der sie beansprucht.  Beim Hochfahren
-        # aktiviert ros2_control ihn NICHT von selbst wieder: ohne diesen
-        # Schritt bleibt der Arm bestromt und verbunden, aber jede
-        # MoveIt-Ausfuehrung scheitert -- ohne dass die Fehlermeldung auf den
-        # inaktiven Controller zeigt.
+        # controller_mode_manager: nach einem erfolgreichen prepare/recover wird zusaetzlich der Trajectory-Modus
+        # aktiviert.  Ein power_off stoppt das ExternalControl-Programm -> der Treiber meldet seine Command-Interfaces
+        # als nicht verfuegbar -> ros2_control MUSS jeden Controller deaktivieren, der sie beansprucht.  Beim Hochfahren
+        # aktiviert ros2_control ihn NICHT von selbst wieder: ohne diesen Schritt bleibt der Arm bestromt und verbunden,
+        # aber jede MoveIt-Ausfuehrung scheitert -- ohne dass die Fehlermeldung auf den inaktiven Controller zeigt.
         mode_manager_ns = self.declare_parameter(
             "mode_manager_ns", "/a200_0553/manipulators/ur_controller_mode_manager"
         ).value.rstrip("/")
@@ -151,20 +142,17 @@ class StateManager(Node):
         self.action_timeout = float(self.declare_parameter("action_timeout", 120.0).value)
         # CB3 verweigert das Loesen eines Protective-Stops < 5 s nach dem Ausloesen.
         self.protective_stop_wait = float(self.declare_parameter("protective_stop_wait", 6.0).value)
-        # Nach einem "erfolgreichen" SetMode: so lange darf es dauern, bis der Arm
-        # WIRKLICH bereit ist (RUNNING + Safety NORMAL/REDUCED + ExternalControl
-        # laeuft). Ein Protective Stop/FAULT bricht die Wartezeit sofort ab.
+        # Nach einem "erfolgreichen" SetMode: so lange darf es dauern, bis der Arm WIRKLICH bereit ist (RUNNING + Safety
+        # NORMAL/REDUCED + ExternalControl laeuft). Ein Protective Stop/FAULT bricht die Wartezeit sofort ab.
         self.verify_ready_timeout = float(self.declare_parameter("verify_ready_timeout", 20.0).value)
-        # Hochlauf-Anlaeufe insgesamt. Der CB3-Bremsenloese-P-Stop (Modul-Docstring)
-        # heilt empirisch immer im zweiten Anlauf; 3 laesst Luft fuer einen FAULT
-        # (restart_safety) dazwischen.
+        # Hochlauf-Anlaeufe insgesamt. Der CB3-Bremsenloese-P-Stop (Modul-Docstring) heilt empirisch immer im zweiten
+        # Anlauf; 3 laesst Luft fuer einen FAULT (restart_safety) dazwischen.
         self.bringup_attempts = int(self.declare_parameter("bringup_attempts", 3).value)
         # Command-Controller (JTC & Co.) vor jedem Mode-Zyklus deaktivieren.
         self.release_before_power_cycle = bool(self.declare_parameter("release_before_power_cycle", True).value)
 
-        # Clients + Server in einer ReentrantCallbackGroup, damit wir synchron aus
-        # einem Service-Callback heraus die Action abwarten koennen (Antwort wird
-        # von einem anderen Thread des MultiThreadedExecutor verarbeitet).
+        # Clients + Server in einer ReentrantCallbackGroup, damit wir synchron aus einem Service-Callback heraus die
+        # Action abwarten koennen (Antwort wird von einem anderen Thread des MultiThreadedExecutor verarbeitet).
         self.cbg = ReentrantCallbackGroup()
 
         self.cli_set_mode = ActionClient(self, SetMode, self.set_mode_action, callback_group=self.cbg)
@@ -182,19 +170,17 @@ class StateManager(Node):
         )
         self.cli_release = self.create_client(Trigger, f"{mode_manager_ns}/release", callback_group=self.cbg)
 
-        # Priming-Publisher (Modul-Docstring): einmalige Ist-Stand-Publikation auf
-        # den GPIOController-Topics, damit der BEST_EFFORT/VOLATILE-Subscriber im
-        # robot_state_helper nach (Teil-)Restarts nicht blind bleibt. Bewusst
-        # VOLATILE: es darf NICHTS latchen, was spaeter als Stale-Sample bei
-        # Late-Joinern landet - der GPIOController bleibt Owner der Topics.
+        # Priming-Publisher (Modul-Docstring): einmalige Ist-Stand-Publikation auf den GPIOController-Topics, damit der
+        # BEST_EFFORT/VOLATILE-Subscriber im robot_state_helper nach (Teil-)Restarts nicht blind bleibt. Bewusst
+        # VOLATILE: es darf NICHTS latchen, was spaeter als Stale-Sample bei Late-Joinern landet - der GPIOController
+        # bleibt Owner der Topics.
         self.pub_robot_mode = self.create_publisher(RobotMode, f"{io_status_ns}/robot_mode", 1)
         self.pub_safety_mode = self.create_publisher(SafetyMode, f"{io_status_ns}/safety_mode", 1)
 
-        # ExternalControl-Status (True = ROS-Programm laeuft) fuer den idempotenten
-        # prepare-Vorcheck und die Hochlauf-Verifikation. Der GPIOController
-        # publisht TRANSIENT_LOCAL und NUR bei Aenderung -> Subscription ebenfalls
-        # TRANSIENT_LOCAL, sonst bleibt der Wert nach einem Adapter-Restart None,
-        # bis sich das Programm das naechste Mal aendert (Vorcheck+Watcher blind).
+        # ExternalControl-Status (True = ROS-Programm laeuft) fuer den idempotenten prepare-Vorcheck und die
+        # Hochlauf-Verifikation. Der GPIOController publisht TRANSIENT_LOCAL und NUR bei Aenderung -> Subscription
+        # ebenfalls TRANSIENT_LOCAL, sonst bleibt der Wert nach einem Adapter-Restart None, bis sich das Programm das
+        # naechste Mal aendert (Vorcheck+Watcher blind).
         self._program_running = None
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
@@ -219,8 +205,8 @@ class StateManager(Node):
         # Tool-Anschluss.  auto_recover=false schaltet den Automatismus ab.
         self.auto_recover = bool(self.declare_parameter("auto_recover", True).value)
         self.auto_recover_period = float(self.declare_parameter("auto_recover_period", 5.0).value)
-        # so viele aufeinanderfolgende "muss recovern"-Beobachtungen vor dem Handeln
-        # (entprellt Boot-/prepare-Uebergaenge, in denen der Zustand kurz passt).
+        # so viele aufeinanderfolgende "muss recovern"-Beobachtungen vor dem Handeln (entprellt
+        # Boot-/prepare-Uebergaenge, in denen der Zustand kurz passt).
         self.auto_recover_settle = int(self.declare_parameter("auto_recover_settle", 2).value)
         self._needs_recover_count = 0
         if self.auto_recover:
@@ -275,10 +261,9 @@ class StateManager(Node):
     def _effective_program_running(self):
         """ExternalControl-Status: Topic-Wert, sonst Dashboard-Fallback. -> bool | None.
 
-        Der latched robot_program_running-Wert kommt unter rmw_zenoh bei einem
-        Late-Joiner NICHT zuverlaessig an (nur Live-Aenderungen; empirisch am
-        a200-0553). Solange das Topic also noch nichts geliefert hat, fragt
-        dieser Fallback den Dashboard-Server ('program_running') - im
+        Der latched robot_program_running-Wert kommt unter rmw_zenoh bei einem Late-Joiner NICHT zuverlaessig an (nur
+        Live-Aenderungen; empirisch am a200-0553). Solange das Topic also noch nichts geliefert hat, fragt dieser
+        Fallback den Dashboard-Server ('program_running') - im
         headless-Betrieb laeuft dort das ExternalControl-Skript als Programm."""
         if self._program_running is not None:
             return self._program_running
@@ -330,9 +315,8 @@ class StateManager(Node):
     def _prime_state_helper(self):
         """robot_state_helper vor jedem Goal 'sehend' machen (Modul-Docstring).
 
-        Ist-Stand per Dashboard lesen und EINMAL auf die robot_mode/safety_mode-
-        Topics publizieren. Ohne das lehnt der Helper nach einem Restart dieses
-        Services (ohne Treiber-Restart) jedes Goal ab, weil er die latched Werte
+        Ist-Stand per Dashboard lesen und EINMAL auf die robot_mode/safety_mode- Topics publizieren. Ohne das lehnt der
+        Helper nach einem Restart dieses Services (ohne Treiber-Restart) jedes Goal ab, weil er die latched Werte
         des GPIOController verpasst hat und niemand neu publiziert."""
         robot_mode = self._get_robot_mode()
         safety = self._get_safety_mode()
@@ -371,11 +355,9 @@ class StateManager(Node):
             return False, "SetMode: Timeout beim Senden des Goals"
         handle = send_fut.result()
         if not handle.accepted:
-            # Upstream (jazzy) lehnt NUR ab, wenn robot_mode/safety_mode noch
-            # UNKNOWN/UNDEFINED sind (Helper hat vom frisch gestarteten Treiber
-            # noch keine Statusdaten; unter rmw_zenoh dauert die Discovery ein
-            # paar Sekunden). Einen Busy-Check gibt es upstream nicht -
-            # konkurrierende Goals werden angenommen.
+            # Upstream (jazzy) lehnt NUR ab, wenn robot_mode/safety_mode noch UNKNOWN/UNDEFINED sind (Helper hat vom
+            # frisch gestarteten Treiber noch keine Statusdaten; unter rmw_zenoh dauert die Discovery ein paar
+            # Sekunden). Einen Busy-Check gibt es upstream nicht - konkurrierende Goals werden angenommen.
             return False, (
                 "SetMode-Goal abgelehnt - robot_state_helper vermutlich "
                 "noch nicht ready (robot_mode/safety_mode noch nicht "
@@ -395,10 +377,9 @@ class StateManager(Node):
     def _ensure_trajectory_mode(self):
         """Trajectory-Controller aktivieren (best effort, nie fatal).
 
-        Wird nach erfolgreichem prepare/recover gerufen. Idempotent: der
-        controller_mode_manager schaltet nur, wenn noetig. Schlaegt es fehl (Mode-
-        Manager nicht da, Timeout), wird nur gewarnt - der Arm ist dann bestromt
-        und verbunden, nur der Controller fehlt; das ist besser als ein prepare,
+        Wird nach erfolgreichem prepare/recover gerufen. Idempotent: der controller_mode_manager schaltet nur, wenn
+        noetig. Schlaegt es fehl (Mode- Manager nicht da, Timeout), wird nur gewarnt - der Arm ist dann bestromt und
+        verbunden, nur der Controller fehlt; das ist besser als ein prepare,
         das deswegen als Fehler gilt."""
         if not self.ensure_trajectory_mode:
             return
@@ -423,11 +404,10 @@ class StateManager(Node):
     def _release_command_controllers(self):
         """Command-Controller vor einem Mode-Zyklus deaktivieren (best effort).
 
-        Nach einem manipulators-Restart ist der arm_0_joint_trajectory_controller
-        aktiv, sein Halteziel stammt aber von VOR dem Bestromen (Bremsen zu).
-        Startet ExternalControl mit diesem stale Haltewert, streamt der Treiber
-        sofort dorthin -> Positionssprung/Schleppfehler. Release hier + frisches
-        Aktivieren in _ensure_trajectory_mode NACH dem Hochlauf schliesst die
+        Nach einem manipulators-Restart ist der arm_0_joint_trajectory_controller aktiv, sein Halteziel stammt aber von
+        VOR dem Bestromen (Bremsen zu). Startet ExternalControl mit diesem stale Haltewert, streamt der Treiber sofort
+        dorthin -> Positionssprung/Schleppfehler. Release hier + frisches Aktivieren in _ensure_trajectory_mode NACH dem
+        Hochlauf schliesst die
         Luecke. Nie fatal: ohne Mode-Manager laeuft der Hochlauf wie bisher."""
         if not self.release_before_power_cycle:
             return
@@ -451,11 +431,10 @@ class StateManager(Node):
     def _verify_ready(self, timeout):
         """Nach einem 'erfolgreichen' SetMode pruefen, ob der Arm WIRKLICH bereit ist.
 
-        robot_state_helper meldet success, sobald RUNNING erreicht und play/resend
-        abgesetzt ist - ein Protective Stop, der WAEHREND des Hochlaufs faellt
-        (CB3-Bremsenloesen, Modul-Docstring), rutscht durch diese Luecke. Hier:
-        RUNNING + Safety NORMAL/REDUCED + ExternalControl laeuft, gepollt bis
-        ``timeout``; P-Stop/FAULT/VIOLATION bricht sofort ab (Retry heilt),
+        robot_state_helper meldet success, sobald RUNNING erreicht und play/resend abgesetzt ist - ein Protective Stop,
+        der WAEHREND des Hochlaufs faellt (CB3-Bremsenloesen, Modul-Docstring), rutscht durch diese Luecke. Hier:
+        RUNNING + Safety NORMAL/REDUCED + ExternalControl laeuft, gepollt bis ``timeout``; P-Stop/FAULT/VIOLATION bricht
+        sofort ab (Retry heilt),
         E-Stop bricht endgueltig ab. -> (ok, detail, retryable)."""
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
@@ -513,14 +492,11 @@ class StateManager(Node):
     def prepare(self):
         """Arm einsatzbereit: RUNNING + ExternalControl + Trajectory-Controller.
 
-        Idempotent: ist der Arm schon einsatzbereit, wird sofort success=True
-        gemeldet, OHNE den robot_state_helper -- so laeuft die Demo auch beim
-        wiederholten Start durch, selbst wenn der Helper gerade nicht
-        erreichbar ist.
+        Idempotent: ist der Arm schon einsatzbereit, wird sofort success=True gemeldet, OHNE den robot_state_helper --
+        so laeuft die Demo auch beim wiederholten Start durch, selbst wenn der Helper gerade nicht erreichbar ist.
 
-        Der Trajectory-Modus wird in BEIDEN Faellen sichergestellt, auch im
-        Idempotenz-Zweig: nach einem power_off ist der Arm schnell wieder
-        RUNNING, der Controller aber deaktiviert.
+        Der Trajectory-Modus wird in BEIDEN Faellen sichergestellt, auch im Idempotenz-Zweig: nach einem power_off ist
+        der Arm schnell wieder RUNNING, der Controller aber deaktiviert.
         """
         if self._already_ready():
             self._ensure_trajectory_mode()
@@ -530,9 +506,8 @@ class StateManager(Node):
     def recover(self):
         """Nach Safety-Violation wieder bereit: Programm stoppen, RUNNING, neu starten.
 
-        robot_state_helper behandelt PROTECTIVE_STOP / VIOLATION / FAULT / E-Stop
-        selbst; wir warten davor nur die CB3-Pflichtzeit ab. stop_program=true
-        entspricht der UR-Empfehlung, nach einem Stop das Programm NEU zu starten
+        robot_state_helper behandelt PROTECTIVE_STOP / VIOLATION / FAULT / E-Stop selbst; wir warten davor nur die
+        CB3-Pflichtzeit ab. stop_program=true entspricht der UR-Empfehlung, nach einem Stop das Programm NEU zu starten
         (statt es einfach fortzusetzen).
         """
         return self._bringup(stop_program_first=True)
@@ -551,9 +526,8 @@ class StateManager(Node):
     def _needs_recover(self):
         """True, wenn der Arm bestromt ist, ExternalControl aber NICHT laeuft.
 
-        Genau der Zustand nach spaetem Einschalten / 'Paused': robot_mode in
-        {POWER_ON, IDLE, RUNNING}, aber robot_program_running=False. POWER_OFF /
-        DISCONNECTED / BOOTING (Arm bewusst aus bzw. faehrt noch hoch) und
+        Genau der Zustand nach spaetem Einschalten / 'Paused': robot_mode in {POWER_ON, IDLE, RUNNING}, aber
+        robot_program_running=False. POWER_OFF / DISCONNECTED / BOOTING (Arm bewusst aus bzw. faehrt noch hoch) und
         BACKDRIVE (Freedrive) werden NICHT angefasst. Unbekannter Programmstatus
         (None, auch nach Dashboard-Fallback) -> nicht handeln (sicherer Default)."""
         if self._effective_program_running() is not False:
