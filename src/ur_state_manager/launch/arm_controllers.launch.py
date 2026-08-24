@@ -45,11 +45,7 @@ NS = "/a200_0553/manipulators"
 CONTROLLER_MANAGER = NS + "/controller_manager"
 
 # Aktiv geladene Broadcaster (kollidieren nicht mit dem jtc).
-BROADCASTERS = [
-    "force_torque_sensor_broadcaster",
-    "tcp_pose_broadcaster",
-    "speed_scaling_state_broadcaster",
-]
+BROADCASTERS = ["force_torque_sensor_broadcaster", "tcp_pose_broadcaster", "speed_scaling_state_broadcaster"]
 
 # Command-Controller, die --inactive geladen werden (Reihenfolge egal).
 # Muss zu den Typ-Eintraegen in config/extra_controllers.yaml passen.
@@ -106,9 +102,7 @@ exit $rc
 
 
 def generate_launch_description():
-    extra_params = PathJoinSubstitution(
-        [FindPackageShare("ur_state_manager"), "config", "extra_controllers.yaml"]
-    )
+    extra_params = PathJoinSubstitution([FindPackageShare("ur_state_manager"), "config", "extra_controllers.yaml"])
 
     load_controllers = ExecuteProcess(
         cmd=[

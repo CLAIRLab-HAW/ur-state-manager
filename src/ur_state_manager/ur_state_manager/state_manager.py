@@ -123,9 +123,9 @@ class StateManager(Node):
         ).value
         # Nur fuer die CB3-Wartezeit vor dem (intern sofortigen) unlock noetig;
         # zusaetzlich fuer den idempotenten prepare-Vorcheck (get_robot_mode).
-        dashboard_ns = self.declare_parameter(
-            "dashboard_ns", "/a200_0553/manipulators/dashboard_client"
-        ).value.rstrip("/")
+        dashboard_ns = self.declare_parameter("dashboard_ns", "/a200_0553/manipulators/dashboard_client").value.rstrip(
+            "/"
+        )
         # io_and_status_controller: liefert robot_program_running (ExternalControl aktiv?)
         # fuer den idempotenten prepare-Vorcheck.
         io_status_ns = self.declare_parameter(
@@ -143,47 +143,31 @@ class StateManager(Node):
         mode_manager_ns = self.declare_parameter(
             "mode_manager_ns", "/a200_0553/manipulators/ur_controller_mode_manager"
         ).value.rstrip("/")
-        self.trajectory_mode = self.declare_parameter(
-            "trajectory_mode", "trajectory"
-        ).value
-        self.ensure_trajectory_mode = bool(
-            self.declare_parameter("ensure_trajectory_mode", True).value
-        )
+        self.trajectory_mode = self.declare_parameter("trajectory_mode", "trajectory").value
+        self.ensure_trajectory_mode = bool(self.declare_parameter("ensure_trajectory_mode", True).value)
 
-        self.service_timeout = float(
-            self.declare_parameter("service_timeout", 10.0).value
-        )
+        self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
         # Wie lange ein Mode-Uebergang (z.B. POWER_OFF -> RUNNING) dauern darf.
-        self.action_timeout = float(
-            self.declare_parameter("action_timeout", 120.0).value
-        )
+        self.action_timeout = float(self.declare_parameter("action_timeout", 120.0).value)
         # CB3 verweigert das Loesen eines Protective-Stops < 5 s nach dem Ausloesen.
-        self.protective_stop_wait = float(
-            self.declare_parameter("protective_stop_wait", 6.0).value
-        )
+        self.protective_stop_wait = float(self.declare_parameter("protective_stop_wait", 6.0).value)
         # Nach einem "erfolgreichen" SetMode: so lange darf es dauern, bis der Arm
         # WIRKLICH bereit ist (RUNNING + Safety NORMAL/REDUCED + ExternalControl
         # laeuft). Ein Protective Stop/FAULT bricht die Wartezeit sofort ab.
-        self.verify_ready_timeout = float(
-            self.declare_parameter("verify_ready_timeout", 20.0).value
-        )
+        self.verify_ready_timeout = float(self.declare_parameter("verify_ready_timeout", 20.0).value)
         # Hochlauf-Anlaeufe insgesamt. Der CB3-Bremsenloese-P-Stop (Modul-Docstring)
         # heilt empirisch immer im zweiten Anlauf; 3 laesst Luft fuer einen FAULT
         # (restart_safety) dazwischen.
         self.bringup_attempts = int(self.declare_parameter("bringup_attempts", 3).value)
         # Command-Controller (JTC & Co.) vor jedem Mode-Zyklus deaktivieren.
-        self.release_before_power_cycle = bool(
-            self.declare_parameter("release_before_power_cycle", True).value
-        )
+        self.release_before_power_cycle = bool(self.declare_parameter("release_before_power_cycle", True).value)
 
         # Clients + Server in einer ReentrantCallbackGroup, damit wir synchron aus
         # einem Service-Callback heraus die Action abwarten koennen (Antwort wird
         # von einem anderen Thread des MultiThreadedExecutor verarbeitet).
         self.cbg = ReentrantCallbackGroup()
 
-        self.cli_set_mode = ActionClient(
-            self, SetMode, self.set_mode_action, callback_group=self.cbg
-        )
+        self.cli_set_mode = ActionClient(self, SetMode, self.set_mode_action, callback_group=self.cbg)
         self.cli_get_safety_mode = self.create_client(
             GetSafetyMode, f"{dashboard_ns}/get_safety_mode", callback_group=self.cbg
         )
@@ -194,25 +178,17 @@ class StateManager(Node):
             IsProgramRunning, f"{dashboard_ns}/program_running", callback_group=self.cbg
         )
         self.cli_trajectory_mode = self.create_client(
-            Trigger,
-            f"{mode_manager_ns}/mode/{self.trajectory_mode}",
-            callback_group=self.cbg,
+            Trigger, f"{mode_manager_ns}/mode/{self.trajectory_mode}", callback_group=self.cbg
         )
-        self.cli_release = self.create_client(
-            Trigger, f"{mode_manager_ns}/release", callback_group=self.cbg
-        )
+        self.cli_release = self.create_client(Trigger, f"{mode_manager_ns}/release", callback_group=self.cbg)
 
         # Priming-Publisher (Modul-Docstring): einmalige Ist-Stand-Publikation auf
         # den GPIOController-Topics, damit der BEST_EFFORT/VOLATILE-Subscriber im
         # robot_state_helper nach (Teil-)Restarts nicht blind bleibt. Bewusst
         # VOLATILE: es darf NICHTS latchen, was spaeter als Stale-Sample bei
         # Late-Joinern landet - der GPIOController bleibt Owner der Topics.
-        self.pub_robot_mode = self.create_publisher(
-            RobotMode, f"{io_status_ns}/robot_mode", 1
-        )
-        self.pub_safety_mode = self.create_publisher(
-            SafetyMode, f"{io_status_ns}/safety_mode", 1
-        )
+        self.pub_robot_mode = self.create_publisher(RobotMode, f"{io_status_ns}/robot_mode", 1)
+        self.pub_safety_mode = self.create_publisher(SafetyMode, f"{io_status_ns}/safety_mode", 1)
 
         # ExternalControl-Status (True = ROS-Programm laeuft) fuer den idempotenten
         # prepare-Vorcheck und die Hochlauf-Verifikation. Der GPIOController
@@ -222,27 +198,15 @@ class StateManager(Node):
         self._program_running = None
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
-            Bool,
-            f"{io_status_ns}/robot_program_running",
-            self._on_program_running,
-            latched,
-            callback_group=self.cbg,
+            Bool, f"{io_status_ns}/robot_program_running", self._on_program_running, latched, callback_group=self.cbg
         )
 
         # ---- Eigene Services (unveraendert zur alten API) -----------------
         self._lock = threading.Lock()  # nie zwei Ablaeufe gleichzeitig
-        self.create_service(
-            Trigger, "~/prepare", self._srv_prepare, callback_group=self.cbg
-        )
-        self.create_service(
-            Trigger, "~/recover", self._srv_recover, callback_group=self.cbg
-        )
-        self.create_service(
-            Trigger, "~/ensure_ready", self._srv_ensure_ready, callback_group=self.cbg
-        )
-        self.create_service(
-            Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg
-        )
+        self.create_service(Trigger, "~/prepare", self._srv_prepare, callback_group=self.cbg)
+        self.create_service(Trigger, "~/recover", self._srv_recover, callback_group=self.cbg)
+        self.create_service(Trigger, "~/ensure_ready", self._srv_ensure_ready, callback_group=self.cbg)
+        self.create_service(Trigger, "~/power_off", self._srv_power_off, callback_group=self.cbg)
 
         # ---- Auto-Recovery-Watcher (spaetes Einschalten des Arms) ----------
         # Wird der UR erst NACH dem Boot bestromt, laeuft ExternalControl nicht
@@ -254,21 +218,13 @@ class StateManager(Node):
         # Greifer betrifft das nicht: er haengt an der OnRobot-URCap, nicht am
         # Tool-Anschluss.  auto_recover=false schaltet den Automatismus ab.
         self.auto_recover = bool(self.declare_parameter("auto_recover", True).value)
-        self.auto_recover_period = float(
-            self.declare_parameter("auto_recover_period", 5.0).value
-        )
+        self.auto_recover_period = float(self.declare_parameter("auto_recover_period", 5.0).value)
         # so viele aufeinanderfolgende "muss recovern"-Beobachtungen vor dem Handeln
         # (entprellt Boot-/prepare-Uebergaenge, in denen der Zustand kurz passt).
-        self.auto_recover_settle = int(
-            self.declare_parameter("auto_recover_settle", 2).value
-        )
+        self.auto_recover_settle = int(self.declare_parameter("auto_recover_settle", 2).value)
         self._needs_recover_count = 0
         if self.auto_recover:
-            self.create_timer(
-                self.auto_recover_period,
-                self._auto_recover_tick,
-                callback_group=self.cbg,
-            )
+            self.create_timer(self.auto_recover_period, self._auto_recover_tick, callback_group=self.cbg)
 
         self.get_logger().info(
             f"ur_state_manager (Adapter) bereit. set_mode_action={self.set_mode_action} "
@@ -300,9 +256,7 @@ class StateManager(Node):
 
     def _get_safety_mode(self):
         """safety_mode ueber den Dashboard-Client lesen. -> mode | None."""
-        if not self.cli_get_safety_mode.wait_for_service(
-            timeout_sec=self.service_timeout
-        ):
+        if not self.cli_get_safety_mode.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_get_safety_mode.call_async(GetSafetyMode.Request())
         if not self._spin_future(fut, self.service_timeout):
@@ -311,9 +265,7 @@ class StateManager(Node):
 
     def _get_robot_mode(self):
         """robot_mode ueber den Dashboard-Client lesen. -> mode | None."""
-        if not self.cli_get_robot_mode.wait_for_service(
-            timeout_sec=self.service_timeout
-        ):
+        if not self.cli_get_robot_mode.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_get_robot_mode.call_async(GetRobotMode.Request())
         if not self._spin_future(fut, self.service_timeout):
@@ -330,9 +282,7 @@ class StateManager(Node):
         headless-Betrieb laeuft dort das ExternalControl-Skript als Programm."""
         if self._program_running is not None:
             return self._program_running
-        if not self.cli_program_running.wait_for_service(
-            timeout_sec=self.service_timeout
-        ):
+        if not self.cli_program_running.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_program_running.call_async(IsProgramRunning.Request())
         if not self._spin_future(fut, self.service_timeout):
@@ -349,11 +299,7 @@ class StateManager(Node):
         robot_mode = self._get_robot_mode()
         safety = self._get_safety_mode()
         prog = self._effective_program_running()
-        if (
-            robot_mode == RobotMode.RUNNING
-            and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED)
-            and prog is True
-        ):
+        if robot_mode == RobotMode.RUNNING and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED) and prog is True:
             self.get_logger().info(
                 "prepare: Arm bereits RUNNING + ExternalControl aktiv "
                 "-> kein Mode-Wechsel noetig (robot_state_helper nicht gebraucht)."
@@ -372,8 +318,7 @@ class StateManager(Node):
         safety = self._get_safety_mode()
         if safety == SafetyMode.PROTECTIVE_STOP:
             self.get_logger().info(
-                f"Protective-Stop erkannt -> warte {self.protective_stop_wait}s "
-                "(CB3-Pflicht) vor dem unlock ..."
+                f"Protective-Stop erkannt -> warte {self.protective_stop_wait}s " "(CB3-Pflicht) vor dem unlock ..."
             )
             self._sleep(self.protective_stop_wait)
         elif safety is None:
@@ -409,8 +354,7 @@ class StateManager(Node):
         """SetMode-Goal senden und synchron auf das Ergebnis warten. -> (ok, msg)."""
         if not self.cli_set_mode.wait_for_server(timeout_sec=self.service_timeout):
             return False, (
-                "robot_state_helper/set_mode-Action nicht verfuegbar - "
-                "laeuft der ur_robot_state_helper-Node?"
+                "robot_state_helper/set_mode-Action nicht verfuegbar - " "laeuft der ur_robot_state_helper-Node?"
             )
         self._prime_state_helper()
 
@@ -419,13 +363,10 @@ class StateManager(Node):
         goal.stop_program = stop_program
         goal.play_program = play_program
         self.get_logger().info(
-            f"SetMode -> target={_robot_mode_name(target)} "
-            f"stop_program={stop_program} play_program={play_program}"
+            f"SetMode -> target={_robot_mode_name(target)} " f"stop_program={stop_program} play_program={play_program}"
         )
 
-        send_fut = self.cli_set_mode.send_goal_async(
-            goal, feedback_callback=self._on_feedback
-        )
+        send_fut = self.cli_set_mode.send_goal_async(goal, feedback_callback=self._on_feedback)
         if not self._spin_future(send_fut, self.service_timeout):
             return False, "SetMode: Timeout beim Senden des Goals"
         handle = send_fut.result()
@@ -444,10 +385,7 @@ class StateManager(Node):
 
         res_fut = handle.get_result_async()
         if not self._spin_future(res_fut, self.action_timeout):
-            return (
-                False,
-                f"SetMode: Timeout ({self.action_timeout}s) beim Warten auf das Ergebnis",
-            )
+            return (False, f"SetMode: Timeout ({self.action_timeout}s) beim Warten auf das Ergebnis")
         result = res_fut.result().result
         return result.success, result.message
 
@@ -464,9 +402,7 @@ class StateManager(Node):
         das deswegen als Fehler gilt."""
         if not self.ensure_trajectory_mode:
             return
-        if not self.cli_trajectory_mode.wait_for_service(
-            timeout_sec=self.service_timeout
-        ):
+        if not self.cli_trajectory_mode.wait_for_service(timeout_sec=self.service_timeout):
             self.get_logger().warn(
                 f"Trajectory-Modus: {self.cli_trajectory_mode.srv_name} nicht "
                 "erreichbar (laeuft der controller_mode_manager?) - der Arm ist "
@@ -510,10 +446,7 @@ class StateManager(Node):
         log(f"Controller-Release vor dem Mode-Zyklus: {res.message}")
 
     _GOOD_SAFETY = (SafetyMode.NORMAL, SafetyMode.REDUCED)
-    _TERMINAL_SAFETY = (
-        SafetyMode.SYSTEM_EMERGENCY_STOP,
-        SafetyMode.ROBOT_EMERGENCY_STOP,
-    )
+    _TERMINAL_SAFETY = (SafetyMode.SYSTEM_EMERGENCY_STOP, SafetyMode.ROBOT_EMERGENCY_STOP)
 
     def _verify_ready(self, timeout):
         """Nach einem 'erfolgreichen' SetMode pruefen, ob der Arm WIRKLICH bereit ist.
@@ -529,11 +462,7 @@ class StateManager(Node):
             robot_mode = self._get_robot_mode()
             safety = self._get_safety_mode()
             prog = self._effective_program_running()
-            if (
-                robot_mode == RobotMode.RUNNING
-                and safety in self._GOOD_SAFETY
-                and prog is True
-            ):
+            if robot_mode == RobotMode.RUNNING and safety in self._GOOD_SAFETY and prog is True:
                 return True, "", True
             detail = (
                 "robot_mode="
@@ -543,11 +472,7 @@ class StateManager(Node):
             )
             if safety in self._TERMINAL_SAFETY:
                 return False, f"{detail} (E-Stop: nur manuell loesbar)", False
-            if safety in (
-                SafetyMode.PROTECTIVE_STOP,
-                SafetyMode.VIOLATION,
-                SafetyMode.FAULT,
-            ):
+            if safety in (SafetyMode.PROTECTIVE_STOP, SafetyMode.VIOLATION, SafetyMode.FAULT):
                 return False, detail, True
             if time.monotonic() >= deadline:
                 return False, detail, True
@@ -566,15 +491,11 @@ class StateManager(Node):
         msg = ""
         for attempt in range(1, attempts + 1):
             if attempt > 1:
-                self.get_logger().warn(
-                    f"Hochlauf-Anlauf {attempt}/{attempts} (zuvor: {msg})"
-                )
+                self.get_logger().warn(f"Hochlauf-Anlauf {attempt}/{attempts} (zuvor: {msg})")
             self._wait_if_protective_stop()
             self._release_command_controllers()
             ok, msg = self._set_mode(
-                RobotMode.RUNNING,
-                stop_program=stop_program_first or attempt > 1,
-                play_program=True,
+                RobotMode.RUNNING, stop_program=stop_program_first or attempt > 1, play_program=True
             )
             if not ok:
                 continue
@@ -587,10 +508,7 @@ class StateManager(Node):
             msg = f"Hochlauf nicht verifiziert: {detail}"
             if not retryable:
                 break
-        return (
-            False,
-            f"Arm nach {attempts} Anlaeufen nicht bereit - letzter Stand: {msg}",
-        )
+        return (False, f"Arm nach {attempts} Anlaeufen nicht bereit - letzter Stand: {msg}")
 
     def prepare(self):
         """Arm einsatzbereit: RUNNING + ExternalControl + Trajectory-Controller.
@@ -625,9 +543,7 @@ class StateManager(Node):
         das Release macht daraus einen geordneten Schritt statt einer Zwangs-
         Deaktivierung (und haelt kein stale Halteziel fuer den naechsten Start)."""
         self._release_command_controllers()
-        return self._set_mode(
-            RobotMode.POWER_OFF, stop_program=True, play_program=False
-        )
+        return self._set_mode(RobotMode.POWER_OFF, stop_program=True, play_program=False)
 
     # ======================================================================
     # Auto-Recovery: bringt den Arm nach spaetem Einschalten ohne Handgriff hoch
@@ -663,9 +579,7 @@ class StateManager(Node):
         )
         resp = Trigger.Response()
         self._run_locked(self.recover, resp)
-        self.get_logger().info(
-            f"Auto-Recovery: recover -> success={resp.success} ({resp.message})"
-        )
+        self.get_logger().info(f"Auto-Recovery: recover -> success={resp.success} ({resp.message})")
 
     # ======================================================================
     # Service-Callbacks

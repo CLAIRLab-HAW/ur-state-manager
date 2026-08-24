@@ -43,14 +43,12 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "dashboard_ns",
                 default_value=f"{NS}/dashboard_client",
-                description="Namespace des ur_robot_driver Dashboard-Clients "
-                "(fuer get_safety_mode im Adapter).",
+                description="Namespace des ur_robot_driver Dashboard-Clients " "(fuer get_safety_mode im Adapter).",
             ),
             DeclareLaunchArgument(
                 "headless_mode",
                 default_value="true",
-                description="true -> ExternalControl via resend_robot_program "
-                "(Clearpath-Default auf a200-0553).",
+                description="true -> ExternalControl via resend_robot_program " "(Clearpath-Default auf a200-0553).",
             ),
             DeclareLaunchArgument(
                 "start_dashboard_client",
@@ -59,9 +57,7 @@ def generate_launch_description():
                 "(noetig, da Clearpath ihn nicht mitbringt).",
             ),
             DeclareLaunchArgument(
-                "robot_ip",
-                default_value=ROBOT_IP,
-                description="IP der UR-Control-Box (Dashboard-Server Port 29999).",
+                "robot_ip", default_value=ROBOT_IP, description="IP der UR-Control-Box (Dashboard-Server Port 29999)."
             ),
             DeclareLaunchArgument(
                 "load_arm_controllers",
@@ -79,13 +75,7 @@ def generate_launch_description():
             # arm_0_joint_trajectory_controller. Daher eigener Spawner-Launch.
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    PathJoinSubstitution(
-                        [
-                            FindPackageShare("ur_state_manager"),
-                            "launch",
-                            "arm_controllers.launch.py",
-                        ]
-                    )
+                    PathJoinSubstitution([FindPackageShare("ur_state_manager"), "launch", "arm_controllers.launch.py"])
                 ),
                 condition=IfCondition(load_arm_controllers),
             ),
@@ -130,12 +120,7 @@ def generate_launch_description():
                 emulate_tty=True,
                 respawn=True,
                 respawn_delay=2.0,
-                parameters=[
-                    {
-                        "robot_ip": robot_ip,
-                        "headless_mode": headless_mode,
-                    }
-                ],
+                parameters=[{"robot_ip": robot_ip, "headless_mode": headless_mode}],
             ),
             # Duenner Adapter: gewohnte Trigger-API -> SetMode-Action des Helpers.
             Node(
@@ -144,12 +129,7 @@ def generate_launch_description():
                 name="ur_state_manager",
                 namespace=NS,
                 output="screen",
-                parameters=[
-                    {
-                        "set_mode_action": f"{NS}/ur_robot_state_helper/set_mode",
-                        "dashboard_ns": dashboard_ns,
-                    }
-                ],
+                parameters=[{"set_mode_action": f"{NS}/ur_robot_state_helper/set_mode", "dashboard_ns": dashboard_ns}],
             ),
         ]
     )

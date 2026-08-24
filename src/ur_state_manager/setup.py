@@ -25,6 +25,6 @@ setup(
         "console_scripts": [
             "state_manager = ur_state_manager.state_manager:main",
             "controller_mode_manager = ur_state_manager.controller_mode_manager:main",
-        ],
+        ]
     },
 )
