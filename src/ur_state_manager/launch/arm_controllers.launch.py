@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Laedt die zusaetzlichen Arm-Controller in den manipulators-controller_manager
-und startet den Controller-Mode-Manager (a200-0553).
+"""Loads the additional arm controllers into the manipulators controller_manager
+and starts the controller mode manager (a200-0553).
 
-  1. Ein Wrapper laedt die Broadcaster (ft/tcp_pose/speed_scaling) AKTIV und die
-     Command-Controller (freedrive/forward/passthrough) --inactive, beide aus
-     config/extra_controllers.yaml (Typ + Params via --param-file) -- aber NUR
-     die, die noch nicht geladen sind (s. u.).
-  2. ur_controller_mode_manager: schaltet zur Laufzeit per Trigger-Service zwischen
-     den Modi um (trajectory/freedrive/forward_*/passthrough).
+  1. A wrapper loads the broadcasters (ft/tcp_pose/speed_scaling) ACTIVE and the
+     command controllers (freedrive/forward/passthrough) --inactive, both from
+     config/extra_controllers.yaml (type + params via --param-file) -- but ONLY
+     those that are not loaded yet (see below).
+  2. ur_controller_mode_manager: switches between the modes at runtime via a
+     Trigger service (trajectory/freedrive/forward_*/passthrough).
 
-Der Basis-Satz (joint_state_broadcaster, arm_0_joint_trajectory_controller, io_and_status_controller) wird von Clearpath
-aus der robot.yaml gespawnt und hier NICHT angefasst.
+The base set (joint_state_broadcaster, arm_0_joint_trajectory_controller, io_and_status_controller) is spawned by
+Clearpath from robot.yaml and is NOT touched here.
 
-WARUM EIN WRAPPER STATT SIEBEN PARALLELER spawner-Nodes
+WHY ONE WRAPPER INSTEAD OF SEVEN PARALLEL spawner NODES
 -------------------------------------------------------
-Am 2026-07-29 dreimal reproduziert: ein 'systemctl restart
-clearpath-custom-ur-state-manager' gegen einen **bereits bestueckten** Arm-CM
-liess die Spawner die ur_controllers-Controller ERNEUT laden -- der
-ros2_control_node starb mit SIGSEGV in libur_controllers.so waehrend der
-Lifecycle-Transition, der Arm-CM war danach tot (list_controllers ohne Antwort).
-Beim Neustart von clearpath-manipulators passiert das NICHT: dort ist der CM
-frisch und leer, die Spawner laden zum ersten Mal -- das funktioniert auch bei
-stromlosem Arm.
+Reproduced three times on 2026-07-29: a 'systemctl restart
+clearpath-custom-ur-state-manager' against an **already populated** arm CM made
+the spawners load the ur_controllers controllers AGAIN -- the ros2_control_node
+died with SIGSEGV in libur_controllers.so during the lifecycle transition, and
+the arm CM was dead afterwards (list_controllers without an answer).  On a
+restart of clearpath-manipulators this does NOT happen: there the CM is fresh
+and empty, the spawners load for the first time -- and that works even with an
+unpowered arm.
 
-Der Unterschied ist also das **Re-Spawnen bereits geladener** Controller, nicht der Stromzustand. (Ein Gate auf den
-Hardware-Zustand hilft nicht: die Komponente meldet 'label=active' auch bei POWER_OFF -- 'active' heisst nur "Treiber
-liest ueber RTDE".)
+So the difference is the **re-spawning of already loaded** controllers, not the power state. (Gating on the hardware
+state does not help: the component reports 'label=active' even at POWER_OFF -- 'active' only means "the driver reads
+via RTDE".)
 
-Deshalb: erst 'ros2 control list_controllers' abfragen, dann nur die fehlenden spawnen. Ist alles schon da, passiert
-nichts -- der Restart wird zum No-op statt zum Absturz. Sequenziell statt parallel, damit die Abfrage nicht mit den
-eigenen Spawns kollidiert.
+Hence: first query 'ros2 control list_controllers', then spawn only the missing ones. If everything is already there,
+nothing happens -- the restart becomes a no-op instead of a crash. Sequential rather than parallel, so that the query
+does not collide with our own spawns.
 """
 
 from launch import LaunchDescription
@@ -41,11 +41,11 @@ from launch_ros.substitutions import FindPackageShare
 NS = "/a200_0553/manipulators"
 CONTROLLER_MANAGER = NS + "/controller_manager"
 
-# Aktiv geladene Broadcaster (kollidieren nicht mit dem jtc).
+# Broadcasters loaded active (they do not collide with the jtc).
 BROADCASTERS = ["force_torque_sensor_broadcaster", "tcp_pose_broadcaster", "speed_scaling_state_broadcaster"]
 
-# Command-Controller, die --inactive geladen werden (Reihenfolge egal). Muss zu den Typ-Eintraegen in
-# config/extra_controllers.yaml passen.
+# Command controllers that are loaded --inactive (order does not matter). Has to match the type entries in
+# config/extra_controllers.yaml.
 COMMAND_CONTROLLERS = [
     "forward_position_controller",
     "forward_velocity_controller",
@@ -53,7 +53,7 @@ COMMAND_CONTROLLERS = [
     "passthrough_trajectory_controller",
 ]
 
-# $1 = Pfad zur extra_controllers.yaml (vom Launch als Substitution uebergeben).
+# $1 = path to extra_controllers.yaml (handed over by the launch file as a substitution).
 _LOAD_SCRIPT = r"""
 set -u
 CM="__CM__"

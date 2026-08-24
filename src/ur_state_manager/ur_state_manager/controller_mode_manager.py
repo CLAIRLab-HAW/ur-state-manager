@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Schaltet die Arm-Controller pro Anwendungsfall um (UR5 auf a200-0553).
+"""Switches the arm controllers per use case (UR5 on the a200-0553).
 
-Idee (siehe Architektur): EIN controller_manager hostet alle Controller; die Command-Controller (die dieselben
-Command-Interfaces beanspruchen und sich daher gegenseitig ausschliessen) liegen meist INAKTIV und werden zur Laufzeit
-per switch_controller aktiviert. Dieser Node bietet je einen std_srvs/Trigger-Service pro "Modus" an; ein Aufruf
-aktiviert den Zielcontroller und deaktiviert die anderen Command-Controller, die gerade aktiv sind.
+Idea (see the architecture): ONE controller_manager hosts all controllers; the command controllers (which claim the
+same command interfaces and therefore exclude one another) mostly lie INACTIVE and are activated at runtime via
+switch_controller. This node offers one std_srvs/Trigger service per "mode"; a call activates the target controller and
+deactivates the other command controllers that are currently active.
 
-Beispiel-Modi (Default, per Parameter ueberschreibbar):
-  trajectory        -> arm_0_joint_trajectory_controller   (Default; MoveIt/Trajektorien)
-  freedrive         -> freedrive_mode_controller           (Hand-Fuehren / Recording)
-  forward_position  -> forward_position_controller         (direkte Positions-Streams)
-  forward_velocity  -> forward_velocity_controller         (direkte Geschwindigkeits-Streams)
-  passthrough       -> passthrough_trajectory_controller   (Trajektorien-Streaming)
+Example modes (defaults, overridable by parameter):
+  trajectory        -> arm_0_joint_trajectory_controller   (default; MoveIt/trajectories)
+  freedrive         -> freedrive_mode_controller           (hand guiding / recording)
+  forward_position  -> forward_position_controller         (direct position streams)
+  forward_velocity  -> forward_velocity_controller         (direct velocity streams)
+  passthrough       -> passthrough_trajectory_controller   (trajectory streaming)
 
-Services (im Node-Namespace, z.B. /a200_0553/manipulators/ur_controller_mode_manager):
-  ~/mode/<name>   (std_srvs/Trigger)  -> in diesen Modus schalten
-  ~/release       (std_srvs/Trigger)  -> alle Command-Controller deaktivieren (Arm frei)
-  ~/active        (std_srvs/Trigger)  -> aktuell aktive(n) Command-Controller melden
+Services (in the node namespace, e.g. /a200_0553/manipulators/ur_controller_mode_manager):
+  ~/mode/<name>   (std_srvs/Trigger)  -> switch into this mode
+  ~/release       (std_srvs/Trigger)  -> deactivate all command controllers (arm free)
+  ~/active        (std_srvs/Trigger)  -> report the currently active command controller(s)
 
-Broadcaster (joint_state_broadcaster, io_and_status_controller, ft/tcp/speed_scaling) sind NICHT Teil der exklusiven
-Gruppe und bleiben unangetastet aktiv.
+Broadcasters (joint_state_broadcaster, io_and_status_controller, ft/tcp/speed_scaling) are NOT part of the exclusive
+group and stay active untouched.
 
-Voraussetzung: die genannten Controller sind im controller_manager geladen (aktiv ODER inaktiv) - siehe
+Precondition: the named controllers are loaded in the controller_manager (active OR inactive) - see
 arm_controllers.launch.py / config/extra_controllers.yaml.
 """
 
@@ -40,11 +40,11 @@ class ControllerModeManager(Node):
     def __init__(self):
         super().__init__("ur_controller_mode_manager")
 
-        # controller_manager relativ -> loest im Node-Namespace auf
+        # controller_manager relative -> resolves inside the node namespace
         cm = self.declare_parameter("controller_manager", "controller_manager").value
         cm = cm.rstrip("/")
 
-        # Parallele Arrays: Modusname -> Controllername. Gleiche Laenge.
+        # Parallel arrays: mode name -> controller name. Same length.
         self.mode_names = list(
             self.declare_parameter(
                 "mode_names", ["trajectory", "freedrive", "forward_position", "forward_velocity", "passthrough"]
@@ -68,7 +68,7 @@ class ControllerModeManager(Node):
         if len(self.mode_names) != len(self.mode_controllers):
             raise ValueError("mode_names und mode_controllers muessen gleich lang sein")
 
-        # Die exklusive Gruppe = alle gemappten Command-Controller.
+        # The exclusive group = all mapped command controllers.
         self.exclusive = list(dict.fromkeys(self.mode_controllers))
         self.mode_to_controller = dict(zip(self.mode_names, self.mode_controllers))
 
@@ -78,7 +78,7 @@ class ControllerModeManager(Node):
         self.cli_switch = self.create_client(SwitchController, f"{cm}/switch_controller", callback_group=self.cbg)
         self.cli_list = self.create_client(ListControllers, f"{cm}/list_controllers", callback_group=self.cbg)
 
-        # Je ein Trigger-Service pro Modus.
+        # One Trigger service per mode.
         for name in self.mode_names:
             self.create_service(
                 Trigger,
@@ -91,14 +91,14 @@ class ControllerModeManager(Node):
 
         self.get_logger().info(f"ur_controller_mode_manager bereit. cm={cm} " f"modi={', '.join(self.mode_names)}")
 
-    # ---- Low-Level ----------------------------------------------------------
+    # ---- low level ----------------------------------------------------------
     def _spin_future(self, future, timeout):
         done = threading.Event()
         future.add_done_callback(lambda _f: done.set())
         return done.wait(timeout) and future.done()
 
     def _active_command_controllers(self):
-        """Liste der aktuell *aktiven* Controller aus der exklusiven Gruppe. None bei Fehler."""
+        """List of the currently *active* controllers from the exclusive group. ``None`` on error."""
         if not self.cli_list.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_list.call_async(ListControllers.Request())
@@ -107,7 +107,7 @@ class ControllerModeManager(Node):
         res = fut.result()
         active = {c.name for c in res.controller if c.state == "active"}
         loaded = {c.name for c in res.controller}
-        # Merken, was ueberhaupt geladen ist (fuer aussagekraeftige Fehler).
+        # Remember what is loaded at all (for meaningful error messages).
         self._loaded = loaded
         return [c for c in self.exclusive if c in active]
 
@@ -125,7 +125,7 @@ class ControllerModeManager(Node):
         ok = fut.result().ok
         return ok, ("ok" if ok else "switch_controller meldete Fehler (geladen? Konflikt?)")
 
-    # ---- Ablauf -------------------------------------------------------------
+    # ---- sequence -----------------------------------------------------------
     def set_mode(self, mode):
         controller = self.mode_to_controller.get(mode)
         if controller is None:
@@ -157,7 +157,7 @@ class ControllerModeManager(Node):
             return False, f"Deaktivieren fehlgeschlagen: {msg}"
         return True, f"Deaktiviert: {', '.join(active)}"
 
-    # ---- Service-Callbacks --------------------------------------------------
+    # ---- service callbacks --------------------------------------------------
     def _run_locked(self, fn, response):
         if not self._lock.acquire(blocking=False):
             response.success = False

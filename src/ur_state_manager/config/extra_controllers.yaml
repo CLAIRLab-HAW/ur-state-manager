@@ -1,19 +1,21 @@
-# Zusaetzliche Arm-Controller fuer den UR5 (a200-0553), die Clearpath NICHT
-# generiert. Werden per arm_controllers.launch.py mit dem controller_manager-spawner
-# in den BESTEHENDEN manipulators-controller_manager geladen:
-#   - Broadcaster -> AKTIV (kollidieren nicht).
-#   - Command-Controller (freedrive/forward/passthrough) -> --inactive (beanspruchen
-#     dieselben Command-Interfaces wie arm_0_joint_trajectory_controller -> wuerden
-#     aktiv kollidieren). Per ur_controller_mode_manager zur Laufzeit umschaltbar.
+# Additional arm controllers for the UR5 (a200-0553) that Clearpath does NOT
+# generate. They are loaded by arm_controllers.launch.py with the
+# controller_manager spawner into the EXISTING manipulators controller_manager:
+#   - broadcasters -> ACTIVE (they do not collide).
+#   - command controllers (freedrive/forward/passthrough) -> --inactive (they claim
+#     the same command interfaces as arm_0_joint_trajectory_controller -> they
+#     would collide when active). Switchable at runtime via
+#     ur_controller_mode_manager.
 #
-# Params 1:1 aus ur_robot_driver/config/ur_controllers.yaml uebernommen, mit
-# tf_prefix 'arm_0_' (statt $(var tf_prefix)). Der File wird dem spawner per
-# --param-file uebergeben. WICHTIG (Jazzy-Format): jeder Controller als
-# '/**/<name>'-Wildcard-Node, und der 'type' steht MIT in dessen 'ros__parameters'
-# (NICHT als separate controller_manager-Section mit FQN -> so zieht der Spawner
-# Typ + Params korrekt; FQN/CM-Section wurde NICHT uebernommen -> "Failed loading").
+# The params are taken 1:1 from ur_robot_driver/config/ur_controllers.yaml, with
+# tf_prefix 'arm_0_' (instead of $(var tf_prefix)). The file is handed to the
+# spawner via --param-file. IMPORTANT (Jazzy format): every controller as a
+# '/**/<name>' wildcard node, and the 'type' stands INSIDE its 'ros__parameters'
+# (NOT as a separate controller_manager section with an FQN -> this way the
+# spawner picks up type + params correctly; the FQN/CM section was NOT adopted ->
+# "Failed loading").
 
-# ---- Broadcaster-Params & Types --------------------------------------------
+# ---- broadcaster params & types --------------------------------------------
 /**/force_torque_sensor_broadcaster:
   ros__parameters:
     type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
@@ -42,7 +44,7 @@
     state_publish_rate: 100.0
     tf_prefix: arm_0_
 
-# ---- Command-Controller-Params & Types -------------------------------------
+# ---- command controller params & types -------------------------------------
 /**/forward_position_controller:
   ros__parameters:
     type: position_controllers/JointGroupPositionController

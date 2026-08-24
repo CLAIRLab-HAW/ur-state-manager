@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Startet die Arm-State-Verwaltung fuer die a200-0553.
+"""Starts the arm state management for the a200-0553.
 
-Drei Nodes:
-  * dashboard_client (ur_robot_driver)   - Dashboard-Services (TCP 29999). Clearpath
-    bringt ihn im headless-Setup nicht mit; robot_state_helper braucht daraus
-    restart_safety/play, der Adapter get_safety_mode. Default: mitstarten.
-  * robot_state_helper (ur_robot_driver) - die eigentliche Mode-/Safety-Recovery.
-    Er oeffnet eine eigene Primary-Interface-Verbindung (robot_ip:30001) fuer
-    power_on/brake_release/unlock_protective_stop und nutzt relative Clients
+Three nodes:
+  * dashboard_client (ur_robot_driver)   - dashboard services (TCP 29999). In the
+    headless setup Clearpath does not bring it along; robot_state_helper needs
+    restart_safety/play from it, the adapter needs get_safety_mode. Default:
+    start it along.
+  * robot_state_helper (ur_robot_driver) - the actual mode/safety recovery.
+    It opens a primary-interface connection of its own (robot_ip:30001) for
+    power_on/brake_release/unlock_protective_stop and uses the relative clients
     dashboard_client/{restart_safety,play} + io_and_status_controller/
-    resend_robot_program sowie die *_mode-Topics -> laeuft daher im
-    manipulators-Namespace, damit alle relativen Namen passen.
-  * ur_state_manager (dieses Paket)      - duenner Adapter: haelt die gewohnte
-    Trigger-API (prepare/recover/ensure_ready/power_off) und delegiert an die
-    SetMode-Action des robot_state_helper.
+    resend_robot_program as well as the *_mode topics -> it therefore runs in
+    the manipulators namespace, so that all relative names resolve.
+  * ur_state_manager (this package)      - thin adapter: keeps the familiar
+    Trigger API (prepare/recover/ensure_ready/power_off) and delegates to the
+    SetMode action of the robot_state_helper.
 
-Defaults passen zum UR5 (CB3) auf a200-0553 (headless_mode, manipulators-Namespace). Per Launch-Argument
-ueberschreibbar.
+The defaults fit the UR5 (CB3) on the a200-0553 (headless_mode, manipulators namespace). Overridable by launch
+argument.
 """
 
 from launch import LaunchDescription
@@ -67,19 +68,19 @@ def generate_launch_description():
                 "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
                 "Abhaengigkeiten und identischer Lifecycle.",
             ),
-            # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths Spawn-Schleife
-            # (clearpath_manipulators/launch/control.launch.py) spawnt jeden control.yaml-Node, dessen NAME 'controller'
-            # enthaelt -- und zwar immer AKTIV. Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
-            # Command-Controller dagegen aktiv und in Kollision mit dem arm_0_joint_trajectory_controller. Daher eigener
-            # Spawner-Launch.
+            # Extra controllers + mode manager. NOT doable via robot.yaml: Clearpath's spawn loop
+            # (clearpath_manipulators/launch/control.launch.py) spawns every control.yaml node whose NAME contains
+            # 'controller' -- and always ACTIVE. The broadcasters (…_broadcaster) would therefore never be loaded, the
+            # command controllers on the other hand active and in collision with the arm_0_joint_trajectory_controller.
+            # Hence a spawner launch of our own.
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([FindPackageShare("ur_state_manager"), "launch", "arm_controllers.launch.py"])
                 ),
                 condition=IfCondition(load_arm_controllers),
             ),
-            # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im manipulators-Namespace -> Services
-            # landen unter /a200_0553/manipulators/dashboard_client/* (= Default dashboard_ns).
+            # Dashboard client from ur_robot_driver. Node name 'dashboard_client' in the manipulators namespace ->
+            # the services land under /a200_0553/manipulators/dashboard_client/* (= the default dashboard_ns).
             Node(
                 package="ur_robot_driver",
                 executable="dashboard_client",
@@ -90,25 +91,25 @@ def generate_launch_description():
                 condition=IfCondition(start_dashboard_client),
                 parameters=[{"robot_ip": robot_ip}],
             ),
-            # Offizielle Mode-/Safety-Recovery. Muss im manipulators-Namespace laufen,
-            # damit seine relativen Clients dashboard_client/* und io_and_status_controller/*
-            # sowie die *_mode-Topics aufloesen. headless_mode -> ExternalControl via
-            # resend_robot_program statt Dashboard-play.
+            # The official mode/safety recovery. Has to run in the manipulators namespace
+            # so that its relative clients dashboard_client/* and io_and_status_controller/*
+            # as well as the *_mode topics resolve. headless_mode -> ExternalControl via
+            # resend_robot_program instead of the dashboard play.
             #
-            # respawn=True: ur_robot_driver 3.7 (jazzy) hat einen Upstream-Race im
-            # RobotStateHelper::setModeExecute -> es nutzt das SHARED current_goal_handle_
-            # (nicht den lokalen goal_handle-Param) fuer succeed()/abort(). Geht ein
-            # zweites SetMode-Goal ein, waehrend das erste noch im Wait-Loop laeuft
-            # (z.B. ein Kalibrierungs-/Skript-prepare + auto_recover gleichzeitig),
-            # ueberschreibt Goal #2 current_goal_handle_; Goal #1 ruft danach succeed()
-            # auf dem bereits succeedeten Goal #2 -> rcl_action "invalid transition from
-            # SUCCEEDED with event SUCCEED" -> std::terminate -> SIGABRT (exit -6). Der
-            # Zustandswechsel (POWER_OFF->RUNNING) war bereits durch; nur das
-            # Folge-succeed crasht den Node. Ohne Respawn bleibt der Helper tot -> die
-            # set_mode-Action verschwindet -> jeder folgende prepare/recover schlaegt fehl
-            # ("set_mode-Action nicht verfuegbar"). Respawn startet ihn nach ~2 s neu;
-            # der eigentliche Trigger (konkurrierende Goals) wird zusaetzlich durch
-            # auto_recover:=false abgestellt (keine parallelen Watcher-Recoveries mehr).
+            # respawn=True: ur_robot_driver 3.7 (jazzy) has an upstream race in
+            # RobotStateHelper::setModeExecute -> it uses the SHARED current_goal_handle_
+            # (not the local goal_handle parameter) for succeed()/abort(). If a second
+            # SetMode goal comes in while the first is still in the wait loop (e.g. a
+            # calibration/script prepare and auto_recover at the same time), goal #2
+            # overwrites current_goal_handle_; goal #1 then calls succeed() on the already
+            # succeeded goal #2 -> rcl_action "invalid transition from SUCCEEDED with event
+            # SUCCEED" -> std::terminate -> SIGABRT (exit -6). The state change
+            # (POWER_OFF->RUNNING) had already gone through; only the follow-up succeed
+            # crashes the node. Without a respawn the helper stays dead -> the set_mode
+            # action disappears -> every subsequent prepare/recover fails ("set_mode action
+            # not available"). The respawn restarts it after about 2 s; the actual trigger
+            # (competing goals) is additionally shut off by auto_recover:=false (no more
+            # parallel watcher recoveries).
             Node(
                 package="ur_robot_driver",
                 executable="robot_state_helper",
