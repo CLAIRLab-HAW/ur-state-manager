@@ -38,100 +38,118 @@ def generate_launch_description():
     robot_ip = LaunchConfiguration("robot_ip")
     load_arm_controllers = LaunchConfiguration("load_arm_controllers")
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            "dashboard_ns", default_value=f"{NS}/dashboard_client",
-            description="Namespace des ur_robot_driver Dashboard-Clients "
-                        "(fuer get_safety_mode im Adapter)."),
-        DeclareLaunchArgument(
-            "headless_mode", default_value="true",
-            description="true -> ExternalControl via resend_robot_program "
-                        "(Clearpath-Default auf a200-0553)."),
-        DeclareLaunchArgument(
-            "start_dashboard_client", default_value="true",
-            description="Den ur_robot_driver dashboard_client mitstarten "
-                        "(noetig, da Clearpath ihn nicht mitbringt)."),
-        DeclareLaunchArgument(
-            "robot_ip", default_value=ROBOT_IP,
-            description="IP der UR-Control-Box (Dashboard-Server Port 29999)."),
-        DeclareLaunchArgument(
-            "load_arm_controllers", default_value="true",
-            description="arm_controllers.launch.py mitstarten (Extra-Controller + "
-                        "Mode-Manager). Bewusst hier und nicht in einer eigenen "
-                        "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
-                        "Abhaengigkeiten und identischer Lifecycle."),
-
-        # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths
-        # Spawn-Schleife (clearpath_manipulators/launch/control.launch.py) spawnt jeden
-        # control.yaml-Node, dessen NAME 'controller' enthaelt -- und zwar immer AKTIV.
-        # Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
-        # Command-Controller dagegen aktiv und in Kollision mit dem
-        # arm_0_joint_trajectory_controller. Daher eigener Spawner-Launch.
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(PathJoinSubstitution([
-                FindPackageShare("ur_state_manager"), "launch",
-                "arm_controllers.launch.py"])),
-            condition=IfCondition(load_arm_controllers),
-        ),
-
-        # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im
-        # manipulators-Namespace -> Services landen unter
-        # /a200_0553/manipulators/dashboard_client/* (= Default dashboard_ns).
-        Node(
-            package="ur_robot_driver",
-            executable="dashboard_client",
-            name="dashboard_client",
-            namespace=NS,
-            output="screen",
-            emulate_tty=True,
-            condition=IfCondition(start_dashboard_client),
-            parameters=[{"robot_ip": robot_ip}],
-        ),
-
-        # Offizielle Mode-/Safety-Recovery. Muss im manipulators-Namespace laufen,
-        # damit seine relativen Clients dashboard_client/* und io_and_status_controller/*
-        # sowie die *_mode-Topics aufloesen. headless_mode -> ExternalControl via
-        # resend_robot_program statt Dashboard-play.
-        #
-        # respawn=True: ur_robot_driver 3.7 (jazzy) hat einen Upstream-Race im
-        # RobotStateHelper::setModeExecute -> es nutzt das SHARED current_goal_handle_
-        # (nicht den lokalen goal_handle-Param) fuer succeed()/abort(). Geht ein
-        # zweites SetMode-Goal ein, waehrend das erste noch im Wait-Loop laeuft
-        # (z.B. ein Kalibrierungs-/Skript-prepare + auto_recover gleichzeitig),
-        # ueberschreibt Goal #2 current_goal_handle_; Goal #1 ruft danach succeed()
-        # auf dem bereits succeedeten Goal #2 -> rcl_action "invalid transition from
-        # SUCCEEDED with event SUCCEED" -> std::terminate -> SIGABRT (exit -6). Der
-        # Zustandswechsel (POWER_OFF->RUNNING) war bereits durch; nur das
-        # Folge-succeed crasht den Node. Ohne Respawn bleibt der Helper tot -> die
-        # set_mode-Action verschwindet -> jeder folgende prepare/recover schlaegt fehl
-        # ("set_mode-Action nicht verfuegbar"). Respawn startet ihn nach ~2 s neu;
-        # der eigentliche Trigger (konkurrierende Goals) wird zusaetzlich durch
-        # auto_recover:=false abgestellt (keine parallelen Watcher-Recoveries mehr).
-        Node(
-            package="ur_robot_driver",
-            executable="robot_state_helper",
-            name="ur_robot_state_helper",
-            namespace=NS,
-            output="screen",
-            emulate_tty=True,
-            respawn=True,
-            respawn_delay=2.0,
-            parameters=[{
-                "robot_ip": robot_ip,
-                "headless_mode": headless_mode,
-            }],
-        ),
-
-        # Duenner Adapter: gewohnte Trigger-API -> SetMode-Action des Helpers.
-        Node(
-            package="ur_state_manager",
-            executable="state_manager",
-            name="ur_state_manager",
-            namespace=NS,
-            output="screen",
-            parameters=[{
-                "set_mode_action": f"{NS}/ur_robot_state_helper/set_mode",
-                "dashboard_ns": dashboard_ns,
-            }],
-        ),
-    ])
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "dashboard_ns",
+                default_value=f"{NS}/dashboard_client",
+                description="Namespace des ur_robot_driver Dashboard-Clients "
+                "(fuer get_safety_mode im Adapter).",
+            ),
+            DeclareLaunchArgument(
+                "headless_mode",
+                default_value="true",
+                description="true -> ExternalControl via resend_robot_program "
+                "(Clearpath-Default auf a200-0553).",
+            ),
+            DeclareLaunchArgument(
+                "start_dashboard_client",
+                default_value="true",
+                description="Den ur_robot_driver dashboard_client mitstarten "
+                "(noetig, da Clearpath ihn nicht mitbringt).",
+            ),
+            DeclareLaunchArgument(
+                "robot_ip",
+                default_value=ROBOT_IP,
+                description="IP der UR-Control-Box (Dashboard-Server Port 29999).",
+            ),
+            DeclareLaunchArgument(
+                "load_arm_controllers",
+                default_value="true",
+                description="arm_controllers.launch.py mitstarten (Extra-Controller + "
+                "Mode-Manager). Bewusst hier und nicht in einer eigenen "
+                "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
+                "Abhaengigkeiten und identischer Lifecycle.",
+            ),
+            # Extra-Controller + Mode-Manager. NICHT ueber robot.yaml machbar: Clearpaths
+            # Spawn-Schleife (clearpath_manipulators/launch/control.launch.py) spawnt jeden
+            # control.yaml-Node, dessen NAME 'controller' enthaelt -- und zwar immer AKTIV.
+            # Die Broadcaster (…_broadcaster) wuerden also nie geladen, die
+            # Command-Controller dagegen aktiv und in Kollision mit dem
+            # arm_0_joint_trajectory_controller. Daher eigener Spawner-Launch.
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution(
+                        [
+                            FindPackageShare("ur_state_manager"),
+                            "launch",
+                            "arm_controllers.launch.py",
+                        ]
+                    )
+                ),
+                condition=IfCondition(load_arm_controllers),
+            ),
+            # Dashboard-Client aus ur_robot_driver. Node-Name 'dashboard_client' im
+            # manipulators-Namespace -> Services landen unter
+            # /a200_0553/manipulators/dashboard_client/* (= Default dashboard_ns).
+            Node(
+                package="ur_robot_driver",
+                executable="dashboard_client",
+                name="dashboard_client",
+                namespace=NS,
+                output="screen",
+                emulate_tty=True,
+                condition=IfCondition(start_dashboard_client),
+                parameters=[{"robot_ip": robot_ip}],
+            ),
+            # Offizielle Mode-/Safety-Recovery. Muss im manipulators-Namespace laufen,
+            # damit seine relativen Clients dashboard_client/* und io_and_status_controller/*
+            # sowie die *_mode-Topics aufloesen. headless_mode -> ExternalControl via
+            # resend_robot_program statt Dashboard-play.
+            #
+            # respawn=True: ur_robot_driver 3.7 (jazzy) hat einen Upstream-Race im
+            # RobotStateHelper::setModeExecute -> es nutzt das SHARED current_goal_handle_
+            # (nicht den lokalen goal_handle-Param) fuer succeed()/abort(). Geht ein
+            # zweites SetMode-Goal ein, waehrend das erste noch im Wait-Loop laeuft
+            # (z.B. ein Kalibrierungs-/Skript-prepare + auto_recover gleichzeitig),
+            # ueberschreibt Goal #2 current_goal_handle_; Goal #1 ruft danach succeed()
+            # auf dem bereits succeedeten Goal #2 -> rcl_action "invalid transition from
+            # SUCCEEDED with event SUCCEED" -> std::terminate -> SIGABRT (exit -6). Der
+            # Zustandswechsel (POWER_OFF->RUNNING) war bereits durch; nur das
+            # Folge-succeed crasht den Node. Ohne Respawn bleibt der Helper tot -> die
+            # set_mode-Action verschwindet -> jeder folgende prepare/recover schlaegt fehl
+            # ("set_mode-Action nicht verfuegbar"). Respawn startet ihn nach ~2 s neu;
+            # der eigentliche Trigger (konkurrierende Goals) wird zusaetzlich durch
+            # auto_recover:=false abgestellt (keine parallelen Watcher-Recoveries mehr).
+            Node(
+                package="ur_robot_driver",
+                executable="robot_state_helper",
+                name="ur_robot_state_helper",
+                namespace=NS,
+                output="screen",
+                emulate_tty=True,
+                respawn=True,
+                respawn_delay=2.0,
+                parameters=[
+                    {
+                        "robot_ip": robot_ip,
+                        "headless_mode": headless_mode,
+                    }
+                ],
+            ),
+            # Duenner Adapter: gewohnte Trigger-API -> SetMode-Action des Helpers.
+            Node(
+                package="ur_state_manager",
+                executable="state_manager",
+                name="ur_state_manager",
+                namespace=NS,
+                output="screen",
+                parameters=[
+                    {
+                        "set_mode_action": f"{NS}/ur_robot_state_helper/set_mode",
+                        "dashboard_ns": dashboard_ns,
+                    }
+                ],
+            ),
+        ]
+    )

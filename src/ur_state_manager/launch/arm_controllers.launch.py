@@ -107,14 +107,21 @@ exit $rc
 
 def generate_launch_description():
     extra_params = PathJoinSubstitution(
-        [FindPackageShare("ur_state_manager"), "config", "extra_controllers.yaml"])
+        [FindPackageShare("ur_state_manager"), "config", "extra_controllers.yaml"]
+    )
 
     load_controllers = ExecuteProcess(
-        cmd=["bash", "-c",
-             (_LOAD_SCRIPT.replace("__CM__", CONTROLLER_MANAGER)
-                          .replace("__ACTIVE__", " ".join(BROADCASTERS))
-                          .replace("__INACTIVE__", " ".join(COMMAND_CONTROLLERS))),
-             "arm_controllers", extra_params],
+        cmd=[
+            "bash",
+            "-c",
+            (
+                _LOAD_SCRIPT.replace("__CM__", CONTROLLER_MANAGER)
+                .replace("__ACTIVE__", " ".join(BROADCASTERS))
+                .replace("__INACTIVE__", " ".join(COMMAND_CONTROLLERS))
+            ),
+            "arm_controllers",
+            extra_params,
+        ],
         name="arm_controllers_loader",
         output="screen",
     )

@@ -47,17 +47,34 @@ class ControllerModeManager(Node):
         cm = cm.rstrip("/")
 
         # Parallele Arrays: Modusname -> Controllername. Gleiche Laenge.
-        self.mode_names = list(self.declare_parameter(
-            "mode_names",
-            ["trajectory", "freedrive", "forward_position",
-             "forward_velocity", "passthrough"]).value)
-        self.mode_controllers = list(self.declare_parameter(
-            "mode_controllers",
-            ["arm_0_joint_trajectory_controller", "freedrive_mode_controller",
-             "forward_position_controller", "forward_velocity_controller",
-             "passthrough_trajectory_controller"]).value)
+        self.mode_names = list(
+            self.declare_parameter(
+                "mode_names",
+                [
+                    "trajectory",
+                    "freedrive",
+                    "forward_position",
+                    "forward_velocity",
+                    "passthrough",
+                ],
+            ).value
+        )
+        self.mode_controllers = list(
+            self.declare_parameter(
+                "mode_controllers",
+                [
+                    "arm_0_joint_trajectory_controller",
+                    "freedrive_mode_controller",
+                    "forward_position_controller",
+                    "forward_velocity_controller",
+                    "passthrough_trajectory_controller",
+                ],
+            ).value
+        )
 
-        self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
+        self.service_timeout = float(
+            self.declare_parameter("service_timeout", 10.0).value
+        )
 
         if len(self.mode_names) != len(self.mode_controllers):
             raise ValueError("mode_names und mode_controllers muessen gleich lang sein")
@@ -70,22 +87,31 @@ class ControllerModeManager(Node):
         self._lock = threading.Lock()
 
         self.cli_switch = self.create_client(
-            SwitchController, f"{cm}/switch_controller", callback_group=self.cbg)
+            SwitchController, f"{cm}/switch_controller", callback_group=self.cbg
+        )
         self.cli_list = self.create_client(
-            ListControllers, f"{cm}/list_controllers", callback_group=self.cbg)
+            ListControllers, f"{cm}/list_controllers", callback_group=self.cbg
+        )
 
         # Je ein Trigger-Service pro Modus.
         for name in self.mode_names:
             self.create_service(
-                Trigger, f"~/mode/{name}",
+                Trigger,
+                f"~/mode/{name}",
                 lambda req, resp, n=name: self._srv_set_mode(n, resp),
-                callback_group=self.cbg)
-        self.create_service(Trigger, "~/release", self._srv_release, callback_group=self.cbg)
-        self.create_service(Trigger, "~/active", self._srv_active, callback_group=self.cbg)
+                callback_group=self.cbg,
+            )
+        self.create_service(
+            Trigger, "~/release", self._srv_release, callback_group=self.cbg
+        )
+        self.create_service(
+            Trigger, "~/active", self._srv_active, callback_group=self.cbg
+        )
 
         self.get_logger().info(
             f"ur_controller_mode_manager bereit. cm={cm} "
-            f"modi={', '.join(self.mode_names)}")
+            f"modi={', '.join(self.mode_names)}"
+        )
 
     # ---- Low-Level ----------------------------------------------------------
     def _spin_future(self, future, timeout):
@@ -119,7 +145,9 @@ class ControllerModeManager(Node):
         if not self._spin_future(fut, self.service_timeout):
             return False, "switch_controller Timeout"
         ok = fut.result().ok
-        return ok, ("ok" if ok else "switch_controller meldete Fehler (geladen? Konflikt?)")
+        return ok, (
+            "ok" if ok else "switch_controller meldete Fehler (geladen? Konflikt?)"
+        )
 
     # ---- Ablauf -------------------------------------------------------------
     def set_mode(self, mode):
@@ -129,16 +157,22 @@ class ControllerModeManager(Node):
         self._loaded = set()
         active = self._active_command_controllers()
         if active is None:
-            return False, "list_controllers fehlgeschlagen (controller_manager erreichbar?)"
+            return (
+                False,
+                "list_controllers fehlgeschlagen (controller_manager erreichbar?)",
+            )
         if controller not in getattr(self, "_loaded", set()):
-            return False, (f"Controller '{controller}' ist nicht geladen - erst per "
-                           "arm_controllers.launch.py laden")
+            return False, (
+                f"Controller '{controller}' ist nicht geladen - erst per "
+                "arm_controllers.launch.py laden"
+            )
         deactivate = [c for c in active if c != controller]
         activate = [] if controller in active else [controller]
         if not activate and not deactivate:
             return True, f"Modus '{mode}' ({controller}) bereits aktiv"
         self.get_logger().info(
-            f"Modus '{mode}': activate={activate} deactivate={deactivate}")
+            f"Modus '{mode}': activate={activate} deactivate={deactivate}"
+        )
         ok, msg = self._switch(activate, deactivate)
         if not ok:
             return False, f"Umschalten auf '{mode}' fehlgeschlagen: {msg}"
@@ -180,7 +214,10 @@ class ControllerModeManager(Node):
     def _srv_active(self, _request, response):
         active = self._active_command_controllers()
         if active is None:
-            response.success, response.message = False, "list_controllers fehlgeschlagen"
+            response.success, response.message = (
+                False,
+                "list_controllers fehlgeschlagen",
+            )
         else:
             response.success = True
             response.message = ", ".join(active) if active else "(keiner aktiv)"
