@@ -149,7 +149,7 @@ class StateManager(Node):
         # Bring-up attempts in total. The CB3 brake-release p-stop (module docstring) empirically always heals on the
         # second attempt; 3 leaves room for a FAULT (restart_safety) in between.
         self.bringup_attempts = int(self.declare_parameter("bringup_attempts", 3).value)
-        # Command-Controller (JTC & Co.) vor jedem Mode-Zyklus deaktivieren.
+        # Deactivate the command controllers (JTC & co.) before every mode cycle.
         self.release_before_power_cycle = bool(self.declare_parameter("release_before_power_cycle", True).value)
 
         # Clients + servers in one ReentrantCallbackGroup, so that we can await the action synchronously from inside a
@@ -188,8 +188,8 @@ class StateManager(Node):
             Bool, f"{io_status_ns}/robot_program_running", self._on_program_running, latched, callback_group=self.cbg
         )
 
-        # ---- Eigene Services (unveraendert zur alten API) -----------------
-        self._lock = threading.Lock()  # nie zwei Ablaeufe gleichzeitig
+        # ---- Own services (unchanged from the old API) -----------------
+        self._lock = threading.Lock()  # never two processes at the same time
         self.create_service(Trigger, "~/prepare", self._srv_prepare, callback_group=self.cbg)
         self.create_service(Trigger, "~/recover", self._srv_recover, callback_group=self.cbg)
         self.create_service(Trigger, "~/ensure_ready", self._srv_ensure_ready, callback_group=self.cbg)
@@ -198,7 +198,7 @@ class StateManager(Node):
         # ---- auto-recovery watcher (arm powered up late) -------------------
         # If the UR is powered only AFTER the boot, ExternalControl does not
         # start (teach pendant "Paused", arm without feedback).  This watcher
-        # recognises "powered, but ExternalControl off" and calls recover on
+        # recognizes "powered, but ExternalControl off" and calls recover on
         # its own.  recover uses stop_program=True (clean restart -> the driver
         # syncs command=actual -> NO position jump, unlike a bare prepare/play,
         # which continues the paused state with a stale command).  The gripper
@@ -214,7 +214,7 @@ class StateManager(Node):
             self.create_timer(self.auto_recover_period, self._auto_recover_tick, callback_group=self.cbg)
 
         self.get_logger().info(
-            f"ur_state_manager (Adapter) bereit. set_mode_action={self.set_mode_action} "
+            f"ur_state_manager (adapter) ready. set_mode_action={self.set_mode_action} "
             f"dashboard_ns={dashboard_ns} auto_recover={self.auto_recover}"
         )
 
@@ -234,7 +234,7 @@ class StateManager(Node):
     def _on_feedback(self, feedback_msg):
         fb = feedback_msg.feedback
         self.get_logger().info(
-            f"SetMode-Feedback: robot_mode={_robot_mode_name(fb.current_robot_mode)} "
+            f"SetMode feedback: robot_mode={_robot_mode_name(fb.current_robot_mode)} "
             f"safety_mode={_safety_mode_name(fb.current_safety_mode)}"
         )
 
@@ -287,30 +287,31 @@ class StateManager(Node):
         prog = self._effective_program_running()
         if robot_mode == RobotMode.RUNNING and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED) and prog is True:
             self.get_logger().info(
-                "prepare: Arm bereits RUNNING + ExternalControl aktiv "
-                "-> kein Mode-Wechsel noetig (robot_state_helper nicht gebraucht)."
+                "prepare: arm already RUNNING + ExternalControl active "
+                "-> no mode change needed (robot_state_helper not required)."
             )
             return True
         self.get_logger().info(
-            "prepare: nicht direkt bereit (robot_mode="
-            f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unbekannt'}, "
-            f"safety={_safety_mode_name(safety) if safety is not None else 'unbekannt'}, "
-            f"program_running={prog}) -> delegiere an robot_state_helper."
+            "prepare: not ready straight away (robot_mode="
+            f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unknown'}, "
+            f"safety={_safety_mode_name(safety) if safety is not None else 'unknown'}, "
+            f"program_running={prog}) -> delegating to robot_state_helper."
         )
         return False
 
     def _wait_if_protective_stop(self):
-        """CB3: nach Protective-Stop >=5 s warten, bevor robot_state_helper unlockt."""
+        """CB3: wait >=5 s after a protective stop before the robot_state_helper unlocks."""
         safety = self._get_safety_mode()
         if safety == SafetyMode.PROTECTIVE_STOP:
             self.get_logger().info(
-                f"Protective-Stop erkannt -> warte {self.protective_stop_wait}s " "(CB3-Pflicht) vor dem unlock ..."
+                f"protective stop detected -> waiting {self.protective_stop_wait}s "
+                "(CB3 requirement) before the unlock ..."
             )
             self._sleep(self.protective_stop_wait)
         elif safety is None:
             self.get_logger().warn(
-                "safety_mode nicht lesbar (Dashboard-Client da?) - fahre ohne "
-                "CB3-Wartezeit fort; ggf. recover erneut aufrufen."
+                "safety_mode not readable (is the dashboard client there?) - continuing "
+                "without the CB3 waiting time; call recover again if needed."
             )
 
     def _prime_state_helper(self):
@@ -323,9 +324,9 @@ class StateManager(Node):
         safety = self._get_safety_mode()
         if robot_mode is None and safety is None:
             self.get_logger().warn(
-                "Priming uebersprungen: Dashboard liefert weder robot_mode noch "
-                "safety_mode - Goal kann am 'unknown mode'-Check des Helpers "
-                "scheitern."
+                "priming skipped: the dashboard supplies neither robot_mode nor "
+                "safety_mode - the goal may fail on the helper's 'unknown mode' "
+                "check."
             )
             return
         if robot_mode is not None:
@@ -339,7 +340,7 @@ class StateManager(Node):
         """Send a SetMode goal and wait synchronously for the result. -> (ok, msg)."""
         if not self.cli_set_mode.wait_for_server(timeout_sec=self.service_timeout):
             return False, (
-                "robot_state_helper/set_mode-Action nicht verfuegbar - " "laeuft der ur_robot_state_helper-Node?"
+                "robot_state_helper/set_mode action not available - " "is the ur_robot_state_helper node running?"
             )
         self._prime_state_helper()
 
@@ -353,22 +354,22 @@ class StateManager(Node):
 
         send_fut = self.cli_set_mode.send_goal_async(goal, feedback_callback=self._on_feedback)
         if not self._spin_future(send_fut, self.service_timeout):
-            return False, "SetMode: Timeout beim Senden des Goals"
+            return False, "SetMode: timeout while sending the goal"
         handle = send_fut.result()
         if not handle.accepted:
             # Upstream (jazzy) rejects ONLY when robot_mode/safety_mode are still UNKNOWN/UNDEFINED (the helper has no
             # status data yet from the freshly started driver; under rmw_zenoh discovery takes a few seconds). There is
             # no busy check upstream - competing goals are accepted.
             return False, (
-                "SetMode-Goal abgelehnt - robot_state_helper vermutlich "
-                "noch nicht ready (robot_mode/safety_mode noch nicht "
-                "empfangen, z.B. direkt nach Stack-Restart); naechster "
-                "Versuch heilt das i.d.R."
+                "SetMode goal rejected - robot_state_helper presumably not "
+                "ready yet (robot_mode/safety_mode not received yet, e.g. "
+                "right after a stack restart); the next attempt usually "
+                "heals it."
             )
 
         res_fut = handle.get_result_async()
         if not self._spin_future(res_fut, self.action_timeout):
-            return (False, f"SetMode: Timeout ({self.action_timeout}s) beim Warten auf das Ergebnis")
+            return (False, f"SetMode: timeout ({self.action_timeout}s) while waiting for the result")
         result = res_fut.result().result
         return result.success, result.message
 
@@ -385,21 +386,21 @@ class StateManager(Node):
             return
         if not self.cli_trajectory_mode.wait_for_service(timeout_sec=self.service_timeout):
             self.get_logger().warn(
-                f"Trajectory-Modus: {self.cli_trajectory_mode.srv_name} nicht "
-                "erreichbar (laeuft der controller_mode_manager?) - der Arm ist "
-                "bereit, aber MoveIt-Ausfuehrung schlaegt fehl, bis der "
-                "arm_0_joint_trajectory_controller aktiv ist."
+                f"trajectory mode: {self.cli_trajectory_mode.srv_name} not "
+                "reachable (is the controller_mode_manager running?) - the arm is "
+                "ready, but MoveIt execution fails until the "
+                "arm_0_joint_trajectory_controller is active."
             )
             return
         fut = self.cli_trajectory_mode.call_async(Trigger.Request())
         if not self._spin_future(fut, self.service_timeout):
-            self.get_logger().warn("Trajectory-Modus: Timeout beim Umschalten.")
+            self.get_logger().warn("trajectory mode: timeout while switching over.")
             return
         res = fut.result()
         if res.success:
-            self.get_logger().info(f"Trajectory-Modus aktiv ({res.message}).")
+            self.get_logger().info(f"trajectory mode active ({res.message}).")
         else:
-            self.get_logger().warn(f"Trajectory-Modus nicht gesetzt: {res.message}")
+            self.get_logger().warn(f"trajectory mode not set: {res.message}")
 
     def _release_command_controllers(self):
         """Deactivate the command controllers before a mode cycle (best effort).
@@ -413,17 +414,17 @@ class StateManager(Node):
             return
         if not self.cli_release.wait_for_service(timeout_sec=self.service_timeout):
             self.get_logger().warn(
-                f"Controller-Release: {self.cli_release.srv_name} nicht erreichbar "
-                "(laeuft der controller_mode_manager?) - fahre ohne Release fort."
+                f"controller release: {self.cli_release.srv_name} not reachable "
+                "(is the controller_mode_manager running?) - continuing without the release."
             )
             return
         fut = self.cli_release.call_async(Trigger.Request())
         if not self._spin_future(fut, self.service_timeout):
-            self.get_logger().warn("Controller-Release: Timeout - fahre fort.")
+            self.get_logger().warn("controller release: timeout - continuing.")
             return
         res = fut.result()
         log = self.get_logger().info if res.success else self.get_logger().warn
-        log(f"Controller-Release vor dem Mode-Zyklus: {res.message}")
+        log(f"controller release before the mode cycle: {res.message}")
 
     _GOOD_SAFETY = (SafetyMode.NORMAL, SafetyMode.REDUCED)
     _TERMINAL_SAFETY = (SafetyMode.SYSTEM_EMERGENCY_STOP, SafetyMode.ROBOT_EMERGENCY_STOP)
@@ -444,12 +445,12 @@ class StateManager(Node):
                 return True, "", True
             detail = (
                 "robot_mode="
-                f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unbekannt'} "
-                f"safety={_safety_mode_name(safety) if safety is not None else 'unbekannt'} "
+                f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unknown'} "
+                f"safety={_safety_mode_name(safety) if safety is not None else 'unknown'} "
                 f"program_running={prog}"
             )
             if safety in self._TERMINAL_SAFETY:
-                return False, f"{detail} (E-Stop: nur manuell loesbar)", False
+                return False, f"{detail} (E-stop: can only be released manually)", False
             if safety in (SafetyMode.PROTECTIVE_STOP, SafetyMode.VIOLATION, SafetyMode.FAULT):
                 return False, detail, True
             if time.monotonic() >= deadline:
@@ -469,7 +470,7 @@ class StateManager(Node):
         msg = ""
         for attempt in range(1, attempts + 1):
             if attempt > 1:
-                self.get_logger().warn(f"Hochlauf-Anlauf {attempt}/{attempts} (zuvor: {msg})")
+                self.get_logger().warn(f"bring-up attempt {attempt}/{attempts} (previously: {msg})")
             self._wait_if_protective_stop()
             self._release_command_controllers()
             ok, msg = self._set_mode(
@@ -481,12 +482,12 @@ class StateManager(Node):
             if ok:
                 self._ensure_trajectory_mode()
                 if attempt > 1:
-                    return True, f"bereit (Anlauf {attempt}/{attempts})"
-                return True, (msg or "bereit")
-            msg = f"Hochlauf nicht verifiziert: {detail}"
+                    return True, f"ready (attempt {attempt}/{attempts})"
+                return True, (msg or "ready")
+            msg = f"bring-up not verified: {detail}"
             if not retryable:
                 break
-        return (False, f"Arm nach {attempts} Anlaeufen nicht bereit - letzter Stand: {msg}")
+        return (False, f"arm not ready after {attempts} attempts - last state: {msg}")
 
     def prepare(self):
         """Arm in service: RUNNING + ExternalControl + trajectory controller.
@@ -499,7 +500,7 @@ class StateManager(Node):
         """
         if self._already_ready():
             self._ensure_trajectory_mode()
-            return True, "bereits einsatzbereit (RUNNING, ExternalControl aktiv)"
+            return True, "already in service (RUNNING, ExternalControl active)"
         return self._bringup(stop_program_first=False)
 
     def recover(self):
@@ -547,29 +548,29 @@ class StateManager(Node):
             return  # debounce: only act after several consistent observations
         self._needs_recover_count = 0
         self.get_logger().warn(
-            "Auto-Recovery: Arm bestromt, aber ExternalControl laeuft nicht "
-            "(spaetes Einschalten / Paused) -> fuehre recover aus ..."
+            "auto recovery: arm powered, but ExternalControl is not running "
+            "(late power-up / Paused) -> running recover ..."
         )
         resp = Trigger.Response()
         self._run_locked(self.recover, resp)
-        self.get_logger().info(f"Auto-Recovery: recover -> success={resp.success} ({resp.message})")
+        self.get_logger().info(f"auto recovery: recover -> success={resp.success} ({resp.message})")
 
     # ======================================================================
-    # Service-Callbacks
+    # service callbacks
     # ======================================================================
     def _run_locked(self, fn, response):
         if not self._lock.acquire(blocking=False):
             response.success = False
-            response.message = "Es laeuft bereits ein prepare/recover-Vorgang"
+            response.message = "a prepare/recover process is already underway"
             return response
         try:
             ok, msg = fn()
             response.success = ok
             response.message = msg
         except Exception as exc:  # defensive: never let the service thread die
-            self.get_logger().error(f"Ausnahme: {exc}")
+            self.get_logger().error(f"Exception: {exc}")
             response.success = False
-            response.message = f"Ausnahme: {exc}"
+            response.message = f"Exception: {exc}"
         finally:
             self._lock.release()
         return response

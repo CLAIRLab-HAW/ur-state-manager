@@ -62,7 +62,7 @@ ACTIVE="__ACTIVE__"
 INACTIVE="__INACTIVE__"
 TAG="arm_controllers"
 
-# 1) Auf den controller_manager warten (Boot: der CM kommt erst hoch).
+# 1) Wait for the controller_manager (boot: the CM only comes up).
 LOADED=""
 for i in $(seq 1 60); do
     if out="$(ros2 control list_controllers -c "$CM" 2>/dev/null)"; then
@@ -72,22 +72,22 @@ for i in $(seq 1 60); do
     sleep 2
 done
 if [ -z "$LOADED" ] && ! ros2 control list_controllers -c "$CM" >/dev/null 2>&1; then
-    echo "$TAG: controller_manager $CM nicht erreichbar - keine Extra-Controller geladen." >&2
+    echo "$TAG: controller_manager $CM not reachable - no extra controllers loaded." >&2
     exit 1
 fi
 
 already() { printf '%s\n' "$LOADED" | grep -qx "$1"; }
 
-# 2) Nur fehlende Controller spawnen. Ein erneutes Laden eines bereits
-#    geladenen ur_controllers-Controllers bringt den CM zum Absturz (s. Docstring).
+# 2) Spawn only the missing controllers. Reloading an already loaded
+#    ur_controllers controller crashes the CM (see the docstring).
 rc=0
 spawn() {
     name="$1"; shift
     if already "$name"; then
-        echo "$TAG: $name bereits geladen -> uebersprungen"
+        echo "$TAG: $name already loaded -> skipped"
         return 0
     fi
-    echo "$TAG: spawne $name $*"
+    echo "$TAG: spawning $name $*"
     ros2 run controller_manager spawner "$name" "$@" \
         --param-file "$PARAMS" -c "$CM" --controller-manager-timeout 60 || rc=1
 }

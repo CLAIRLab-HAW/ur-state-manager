@@ -66,7 +66,7 @@ class ControllerModeManager(Node):
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
 
         if len(self.mode_names) != len(self.mode_controllers):
-            raise ValueError("mode_names und mode_controllers muessen gleich lang sein")
+            raise ValueError("mode_names and mode_controllers must be the same length")
 
         # The exclusive group = all mapped command controllers.
         self.exclusive = list(dict.fromkeys(self.mode_controllers))
@@ -89,7 +89,7 @@ class ControllerModeManager(Node):
         self.create_service(Trigger, "~/release", self._srv_release, callback_group=self.cbg)
         self.create_service(Trigger, "~/active", self._srv_active, callback_group=self.cbg)
 
-        self.get_logger().info(f"ur_controller_mode_manager bereit. cm={cm} " f"modi={', '.join(self.mode_names)}")
+        self.get_logger().info(f"ur_controller_mode_manager ready. cm={cm} " f"modes={', '.join(self.mode_names)}")
 
     # ---- low level ----------------------------------------------------------
     def _spin_future(self, future, timeout):
@@ -113,7 +113,7 @@ class ControllerModeManager(Node):
 
     def _switch(self, activate, deactivate):
         if not self.cli_switch.wait_for_service(timeout_sec=self.service_timeout):
-            return False, "switch_controller nicht verfuegbar"
+            return False, "switch_controller not available"
         req = SwitchController.Request()
         req.activate_controllers = activate
         req.deactivate_controllers = deactivate
@@ -121,54 +121,54 @@ class ControllerModeManager(Node):
         req.activate_asap = True
         fut = self.cli_switch.call_async(req)
         if not self._spin_future(fut, self.service_timeout):
-            return False, "switch_controller Timeout"
+            return False, "switch_controller timed out"
         ok = fut.result().ok
-        return ok, ("ok" if ok else "switch_controller meldete Fehler (geladen? Konflikt?)")
+        return ok, ("ok" if ok else "switch_controller reported error (loaded? conflict?)")
 
     # ---- sequence -----------------------------------------------------------
     def set_mode(self, mode):
         controller = self.mode_to_controller.get(mode)
         if controller is None:
-            return False, f"Unbekannter Modus '{mode}'"
+            return False, f"Unknown mode '{mode}'"
         self._loaded = set()
         active = self._active_command_controllers()
         if active is None:
-            return (False, "list_controllers fehlgeschlagen (controller_manager erreichbar?)")
+            return False, "list_controllers failed (controller_manager reachable?)"
         if controller not in getattr(self, "_loaded", set()):
-            return False, (f"Controller '{controller}' ist nicht geladen - erst per " "arm_controllers.launch.py laden")
+            return False, f"Controller '{controller}' is not loaded - load it first via arm_controllers.launch.py"
         deactivate = [c for c in active if c != controller]
         activate = [] if controller in active else [controller]
         if not activate and not deactivate:
-            return True, f"Modus '{mode}' ({controller}) bereits aktiv"
-        self.get_logger().info(f"Modus '{mode}': activate={activate} deactivate={deactivate}")
+            return True, f"Mode '{mode}' ({controller}) already active"
+        self.get_logger().info(f"Mode '{mode}': activate={activate} deactivate={deactivate}")
         ok, msg = self._switch(activate, deactivate)
         if not ok:
-            return False, f"Umschalten auf '{mode}' fehlgeschlagen: {msg}"
-        return True, f"Modus '{mode}' aktiv ({controller})"
+            return False, f"Switching to '{mode}' failed: {msg}"
+        return True, f"Mode '{mode}' active ({controller})"
 
     def release(self):
         active = self._active_command_controllers()
         if active is None:
-            return False, "list_controllers fehlgeschlagen"
+            return False, "list_controllers failed"
         if not active:
-            return True, "Kein Command-Controller aktiv"
+            return True, "No command controller active"
         ok, msg = self._switch([], active)
         if not ok:
-            return False, f"Deaktivieren fehlgeschlagen: {msg}"
-        return True, f"Deaktiviert: {', '.join(active)}"
+            return False, f"Disable failed: {msg}"
+        return True, f"Disabled: {', '.join(active)}"
 
     # ---- service callbacks --------------------------------------------------
     def _run_locked(self, fn, response):
         if not self._lock.acquire(blocking=False):
             response.success = False
-            response.message = "Es laeuft bereits ein Umschaltvorgang"
+            response.message = "A switchover process is already underway"
             return response
         try:
             ok, msg = fn()
             response.success, response.message = ok, msg
         except Exception as exc:
-            self.get_logger().error(f"Ausnahme: {exc}")
-            response.success, response.message = False, f"Ausnahme: {exc}"
+            self.get_logger().error(f"Exception: {exc}")
+            response.success, response.message = False, f"Exception: {exc}"
         finally:
             self._lock.release()
         return response
@@ -182,10 +182,10 @@ class ControllerModeManager(Node):
     def _srv_active(self, _request, response):
         active = self._active_command_controllers()
         if active is None:
-            response.success, response.message = (False, "list_controllers fehlgeschlagen")
+            response.success, response.message = (False, "list_controllers failed")
         else:
             response.success = True
-            response.message = ", ".join(active) if active else "(keiner aktiv)"
+            response.message = ", ".join(active) if active else "(none active)"
         return response
 
 

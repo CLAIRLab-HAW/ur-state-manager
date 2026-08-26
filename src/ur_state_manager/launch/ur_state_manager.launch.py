@@ -44,29 +44,30 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "dashboard_ns",
                 default_value=f"{NS}/dashboard_client",
-                description="Namespace des ur_robot_driver Dashboard-Clients " "(fuer get_safety_mode im Adapter).",
+                description="Namespace of the ur_robot_driver dashboard client (for get_safety_mode in the adapter).",
             ),
             DeclareLaunchArgument(
                 "headless_mode",
                 default_value="true",
-                description="true -> ExternalControl via resend_robot_program " "(Clearpath-Default auf a200-0553).",
+                description="true -> ExternalControl via resend_robot_program "
+                "(the Clearpath default on the a200-0553).",
             ),
             DeclareLaunchArgument(
                 "start_dashboard_client",
                 default_value="true",
-                description="Den ur_robot_driver dashboard_client mitstarten "
-                "(noetig, da Clearpath ihn nicht mitbringt).",
+                description="Start the ur_robot_driver dashboard_client along with it "
+                "(necessary, because Clearpath does not bring it along).",
             ),
             DeclareLaunchArgument(
-                "robot_ip", default_value=ROBOT_IP, description="IP der UR-Control-Box (Dashboard-Server Port 29999)."
+                "robot_ip",
+                default_value=ROBOT_IP,
+                description="IP of the UR control box (dashboard server, port 29999).",
             ),
             DeclareLaunchArgument(
                 "load_arm_controllers",
                 default_value="true",
-                description="arm_controllers.launch.py mitstarten (Extra-Controller + "
-                "Mode-Manager). Bewusst hier und nicht in einer eigenen "
-                "systemd-Unit: gleicher Workspace, gleicher User, gleiche "
-                "Abhaengigkeiten und identischer Lifecycle.",
+                description="arm_controllers.launch.py (extra controller + mode manager). Deliberately here and not in "
+                "its own systemd unit: same workspace, same user, same dependencies and identical lifecycle.",
             ),
             # Extra controllers + mode manager. NOT doable via robot.yaml: Clearpath's spawn loop
             # (clearpath_manipulators/launch/control.launch.py) spawns every control.yaml node whose NAME contains
@@ -121,7 +122,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[{"robot_ip": robot_ip, "headless_mode": headless_mode}],
             ),
-            # Duenner Adapter: gewohnte Trigger-API -> SetMode-Action des Helpers.
+            # Thin adapter: the familiar Trigger API -> SetMode action of the helper.
             Node(
                 package="ur_state_manager",
                 executable="state_manager",

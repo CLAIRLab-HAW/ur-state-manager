@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     maintainer="Hannes Voss",
     maintainer_email="hannes.voss@haw-hamburg.de",
-    description="UR5-State-Manager: einsatzbereit machen + Recovery nach Safety-Violation.",
+    description="UR5 state manager: make the arm ready for operation + recovery after a safety violation.",
     license="TODO: License declaration",
     tests_require=["pytest"],
     entry_points={

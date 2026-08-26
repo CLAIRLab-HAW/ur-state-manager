@@ -13,6 +13,15 @@ the versioning [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **The package is now English throughout the interpreter-visible layer** -- the remaining German log lines, `Trigger`
+  response messages, launch-argument descriptions and the `setup.py` description follow the comments and docstrings
+  that were pulled along earlier. What a caller receives from `~/prepare`/`~/recover`/`~/ensure_ready`/`~/power_off`
+  therefore changed wording (`"bereits einsatzbereit ..."` -> `"already in service (RUNNING, ExternalControl
+  active)"`, `"Es laeuft bereits ein prepare/recover-Vorgang"` -> `"a prepare/recover process is already underway"`,
+  and so on). No caller in the workspace matches on those strings -- checked on 2026-08-26 across every `.py`, `.md`,
+  `.sh`, `.yaml` and `.js` outside this repo -- so this is prose only, no behaviour change. The `CHANGELOG` entries
+  below stay German: each describes what held on its own date.
+
 - **Die Voraussetzungsliste begruendete den `io_and_status_controller` mit dem
   Greifer** -- "on a200-0553 it is needed for the RG6 anyway". Das stammt aus
   der Tool-DO-Zeit. Seit dem URCap-Umstieg kommandiert `rg6_grip_bridge` den
