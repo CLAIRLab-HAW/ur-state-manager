@@ -5,12 +5,12 @@ This node is an *adapter*: it keeps the familiar std_srvs/Trigger API (prepare /
 and the node name 'ur_state_manager', so that existing callers keep running unchanged, and delegates the work to the
 SetMode action of the robot_state_helper.
 
-What robot_state_helper does itself and is NOT rebuilt here: power_on -> brake_release -> RUNNING,
+What robot_state_helper does itself and is NOT rebuilt here: power_on ─▶ brake_release ─▶ RUNNING,
 unlock_protective_stop on PROTECTIVE_STOP, restart_safety on VIOLATION/FAULT, (re)starting ExternalControl.  An E-stop
 is only reported, never released by software.
 
 The only ingredient robot_state_helper does NOT know about: the CB3 requirement to wait >=5 s after a protective stop
-before unlock_protective_stop is accepted. It unlocks immediately -> on the CB3 that can fail.  That is why
+before unlock_protective_stop is accepted. It unlocks immediately ─▶ on the CB3 that can fail.  That is why
 'recover'/'ensure_ready' read the safety_mode beforehand and wait briefly if needed, BEFORE the SetMode goal goes out.
 
 Four ingredients against the restart / first-power-up traps (a200-0553):
@@ -33,18 +33,18 @@ Four ingredients against the restart / first-power-up traps (a200-0553):
 * CONTROLLER RELEASE before the mode cycle: after a manipulators restart the
   trajectory controller is active, but its hold target dates from BEFORE the
   power-up.  If ExternalControl starts with that stale hold value, the driver
-  streams straight there -> position jump.  A release before the bring-up +
+  streams straight there ─▶ position jump.  A release before the bring-up +
   a fresh activation afterwards closes the gap.
 * LATCHED QoS + DASHBOARD FALLBACK: robot_program_running arrives
-  TRANSIENT_LOCAL and only on change -> the subscription here is likewise.
+  TRANSIENT_LOCAL and only on change ─▶ the subscription here is likewise.
   Under rmw_zenoh the latched value nevertheless does NOT reliably reach late
-  joiners -> as long as the topic has delivered nothing, the dashboard server
+  joiners ─▶ as long as the topic has delivered nothing, the dashboard server
   steps in.  Without both, pre-check, verification and auto recovery would be
   blind after every adapter restart.
 
 Mapping of the Trigger services onto SetMode goals:
   ~/prepare       [idempotent] SetMode{RUNNING, stop_program=false, play_program=true}
-                  pre-check: already RUNNING + ExternalControl + safety ok ->
+                  pre-check: already RUNNING + ExternalControl + safety ok ─▶
                   success=True WITHOUT robot_state_helper.  Retries run as
                   recover (stop_program=true, clean restart).
   ~/recover       [pstop-wait] SetMode{RUNNING, stop_program=true, play_program=true}
@@ -128,7 +128,7 @@ class StateManager(Node):
             "io_status_ns", "/a200_0553/manipulators/io_and_status_controller"
         ).value.rstrip("/")
         # controller_mode_manager: after a successful prepare/recover the trajectory mode is activated as well.  A
-        # power_off stops the ExternalControl program -> the driver reports its command interfaces as unavailable ->
+        # power_off stops the ExternalControl program ─▶ the driver reports its command interfaces as unavailable ─▶
         # ros2_control MUST deactivate every controller that claims them.  On the way back up ros2_control does NOT
         # activate it again by itself: without this step the arm stays powered and connected, but every MoveIt
         # execution fails -- without the error message pointing at the inactive controller.
@@ -139,7 +139,7 @@ class StateManager(Node):
         self.ensure_trajectory_mode = bool(self.declare_parameter("ensure_trajectory_mode", True).value)
 
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
-        # How long a mode transition (e.g. POWER_OFF -> RUNNING) may take.
+        # How long a mode transition (e.g. POWER_OFF ─▶ RUNNING) may take.
         self.action_timeout = float(self.declare_parameter("action_timeout", 120.0).value)
         # The CB3 refuses to release a protective stop < 5 s after it triggered.
         self.protective_stop_wait = float(self.declare_parameter("protective_stop_wait", 6.0).value)
@@ -179,7 +179,7 @@ class StateManager(Node):
         self.pub_safety_mode = self.create_publisher(SafetyMode, f"{io_status_ns}/safety_mode", 1)
 
         # ExternalControl status (True = the ROS program is running) for the idempotent prepare pre-check and the
-        # bring-up verification. The GPIOController publishes TRANSIENT_LOCAL and ONLY on change -> the subscription is
+        # bring-up verification. The GPIOController publishes TRANSIENT_LOCAL and ONLY on change ─▶ the subscription is
         # TRANSIENT_LOCAL as well, otherwise the value stays None after an adapter restart until the program changes
         # the next time (pre-check and watcher blind).
         self._program_running = None
@@ -199,8 +199,8 @@ class StateManager(Node):
         # If the UR is powered only AFTER the boot, ExternalControl does not
         # start (teach pendant "Paused", arm without feedback).  This watcher
         # recognizes "powered, but ExternalControl off" and calls recover on
-        # its own.  recover uses stop_program=True (clean restart -> the driver
-        # syncs command=actual -> NO position jump, unlike a bare prepare/play,
+        # its own.  recover uses stop_program=True (clean restart ─▶ the driver
+        # syncs command=actual ─▶ NO position jump, unlike a bare prepare/play,
         # which continues the paused state with a stale command).  The gripper
         # is not affected: it hangs off the OnRobot URCap, not off the tool
         # connector.  auto_recover=false switches the automation off.
@@ -242,7 +242,7 @@ class StateManager(Node):
         self._program_running = bool(msg.data)
 
     def _get_safety_mode(self):
-        """Read safety_mode via the dashboard client. -> mode | None."""
+        """Read safety_mode via the dashboard client. ─▶ mode | None."""
         if not self.cli_get_safety_mode.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_get_safety_mode.call_async(GetSafetyMode.Request())
@@ -251,7 +251,7 @@ class StateManager(Node):
         return fut.result().safety_mode.mode
 
     def _get_robot_mode(self):
-        """Read robot_mode via the dashboard client. -> mode | None."""
+        """Read robot_mode via the dashboard client. ─▶ mode | None."""
         if not self.cli_get_robot_mode.wait_for_service(timeout_sec=self.service_timeout):
             return None
         fut = self.cli_get_robot_mode.call_async(GetRobotMode.Request())
@@ -260,7 +260,7 @@ class StateManager(Node):
         return fut.result().robot_mode.mode
 
     def _effective_program_running(self):
-        """ExternalControl status: topic value, otherwise dashboard fallback. -> bool | None.
+        """ExternalControl status: topic value, otherwise dashboard fallback. ─▶ bool | None.
 
         Under rmw_zenoh the latched robot_program_running value does NOT reliably reach a late joiner (only live
         changes; measured empirically on the a200-0553). So as long as the topic has delivered nothing yet, this
@@ -281,21 +281,21 @@ class StateManager(Node):
     def _already_ready(self):
         """Idempotence check for prepare: is the arm already in service
         (RUNNING + safety NORMAL/REDUCED + ExternalControl active), so that NO
-        mode change and hence no robot_state_helper is needed? -> bool."""
+        mode change and hence no robot_state_helper is needed? ─▶ bool."""
         robot_mode = self._get_robot_mode()
         safety = self._get_safety_mode()
         prog = self._effective_program_running()
         if robot_mode == RobotMode.RUNNING and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED) and prog is True:
             self.get_logger().info(
                 "prepare: arm already RUNNING + ExternalControl active "
-                "-> no mode change needed (robot_state_helper not required)."
+                "─▶ no mode change needed (robot_state_helper not required)."
             )
             return True
         self.get_logger().info(
             "prepare: not ready straight away (robot_mode="
             f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unknown'}, "
             f"safety={_safety_mode_name(safety) if safety is not None else 'unknown'}, "
-            f"program_running={prog}) -> delegating to robot_state_helper."
+            f"program_running={prog}) ─▶ delegating to robot_state_helper."
         )
         return False
 
@@ -304,7 +304,7 @@ class StateManager(Node):
         safety = self._get_safety_mode()
         if safety == SafetyMode.PROTECTIVE_STOP:
             self.get_logger().info(
-                f"protective stop detected -> waiting {self.protective_stop_wait}s "
+                f"protective stop detected ─▶ waiting {self.protective_stop_wait}s "
                 "(CB3 requirement) before the unlock ..."
             )
             self._sleep(self.protective_stop_wait)
@@ -337,7 +337,7 @@ class StateManager(Node):
         self._sleep(0.3)
 
     def _set_mode(self, target, stop_program, play_program):
-        """Send a SetMode goal and wait synchronously for the result. -> (ok, msg)."""
+        """Send a SetMode goal and wait synchronously for the result. ─▶ (ok, msg)."""
         if not self.cli_set_mode.wait_for_server(timeout_sec=self.service_timeout):
             return False, (
                 "robot_state_helper/set_mode action not available - " "is the ur_robot_state_helper node running?"
@@ -349,7 +349,7 @@ class StateManager(Node):
         goal.stop_program = stop_program
         goal.play_program = play_program
         self.get_logger().info(
-            f"SetMode -> target={_robot_mode_name(target)} " f"stop_program={stop_program} play_program={play_program}"
+            f"SetMode ─▶ target={_robot_mode_name(target)} " f"stop_program={stop_program} play_program={play_program}"
         )
 
         send_fut = self.cli_set_mode.send_goal_async(goal, feedback_callback=self._on_feedback)
@@ -407,7 +407,7 @@ class StateManager(Node):
 
         After a manipulators restart the arm_0_joint_trajectory_controller is active, but its hold target dates from
         BEFORE the power-up (brakes closed). If ExternalControl starts with that stale hold value, the driver streams
-        straight there -> position jump / following error. A release here + a fresh activation in
+        straight there ─▶ position jump / following error. A release here + a fresh activation in
         _ensure_trajectory_mode AFTER the bring-up closes the gap. Never fatal: without the mode manager the bring-up
         runs as before."""
         if not self.release_before_power_cycle:
@@ -435,7 +435,7 @@ class StateManager(Node):
         robot_state_helper reports success as soon as RUNNING is reached and play/resend has been sent - a protective
         stop that falls DURING the bring-up (CB3 brake release, module docstring) slips through that gap. Here:
         RUNNING + safety NORMAL/REDUCED + ExternalControl running, polled until ``timeout``; a p-stop/FAULT/VIOLATION
-        aborts immediately (a retry heals it), an E-stop aborts for good. -> (ok, detail, retryable)."""
+        aborts immediately (a retry heals it), an E-stop aborts for good. ─▶ (ok, detail, retryable)."""
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
             robot_mode = self._get_robot_mode()
@@ -460,8 +460,8 @@ class StateManager(Node):
     def _bringup(self, stop_program_first):
         """Bring-up with verification + retry (the core of prepare/recover).
 
-        One attempt: [CB3 p-stop wait] -> controller release -> SetMode(RUNNING)
-        -> verification. The CB3 brake-release p-stop of the first attempt
+        One attempt: [CB3 p-stop wait] ─▶ controller release ─▶ SetMode(RUNNING)
+        ─▶ verification. The CB3 brake-release p-stop of the first attempt
         (module docstring) is thus healed INSIDE a single Trigger call, instead
         of leaving the caller a false success (or a half-dead arm). From the
         second attempt on, always stop_program=True (clean program restart, UR's
@@ -528,7 +528,7 @@ class StateManager(Node):
 
         Exactly the state after a late power-up / 'Paused': robot_mode in {POWER_ON, IDLE, RUNNING}, but
         robot_program_running=False. POWER_OFF / DISCONNECTED / BOOTING (arm deliberately off, or still booting) and
-        BACKDRIVE (freedrive) are NOT touched. An unknown program status (None, even after the dashboard fallback) ->
+        BACKDRIVE (freedrive) are NOT touched. An unknown program status (None, even after the dashboard fallback) ─▶
         do not act (the safe default)."""
         if self._effective_program_running() is not False:
             return False  # already running, or the status is still unknown
@@ -536,7 +536,7 @@ class StateManager(Node):
         return mode in (RobotMode.POWER_ON, RobotMode.IDLE, RobotMode.RUNNING)
 
     def _auto_recover_tick(self):
-        # Is a prepare/recover already running (manual OR automatic)? -> do not butt in.
+        # Is a prepare/recover already running (manual OR automatic)? ─▶ do not butt in.
         if self._lock.locked():
             self._needs_recover_count = 0
             return
@@ -549,11 +549,11 @@ class StateManager(Node):
         self._needs_recover_count = 0
         self.get_logger().warn(
             "auto recovery: arm powered, but ExternalControl is not running "
-            "(late power-up / Paused) -> running recover ..."
+            "(late power-up / Paused) ─▶ running recover ..."
         )
         resp = Trigger.Response()
         self._run_locked(self.recover, resp)
-        self.get_logger().info(f"auto recovery: recover -> success={resp.success} ({resp.message})")
+        self.get_logger().info(f"auto recovery: recover ─▶ success={resp.success} ({resp.message})")
 
     # ======================================================================
     # service callbacks
@@ -582,7 +582,7 @@ class StateManager(Node):
         return self._run_locked(self.recover, response)
 
     def _srv_ensure_ready(self, _request, response):
-        # SetMode does "whatever is needed" anyway -> identical to recover (including the CB3 wait).
+        # SetMode does "whatever is needed" anyway ─▶ identical to recover (including the CB3 wait).
         return self._run_locked(self.recover, response)
 
     def _srv_power_off(self, _request, response):

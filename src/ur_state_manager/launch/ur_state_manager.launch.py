@@ -10,7 +10,7 @@ Three nodes:
     It opens a primary-interface connection of its own (robot_ip:30001) for
     power_on/brake_release/unlock_protective_stop and uses the relative clients
     dashboard_client/{restart_safety,play} + io_and_status_controller/
-    resend_robot_program as well as the *_mode topics -> it therefore runs in
+    resend_robot_program as well as the *_mode topics ─▶ it therefore runs in
     the manipulators namespace, so that all relative names resolve.
   * ur_state_manager (this package)      - thin adapter: keeps the familiar
     Trigger API (prepare/recover/ensure_ready/power_off) and delegates to the
@@ -80,7 +80,7 @@ def generate_launch_description():
                 ),
                 condition=IfCondition(load_arm_controllers),
             ),
-            # Dashboard client from ur_robot_driver. Node name 'dashboard_client' in the manipulators namespace ->
+            # Dashboard client from ur_robot_driver. Node name 'dashboard_client' in the manipulators namespace ─▶
             # the services land under /a200_0553/manipulators/dashboard_client/* (= the default dashboard_ns).
             Node(
                 package="ur_robot_driver",
@@ -94,20 +94,20 @@ def generate_launch_description():
             ),
             # The official mode/safety recovery. Has to run in the manipulators namespace
             # so that its relative clients dashboard_client/* and io_and_status_controller/*
-            # as well as the *_mode topics resolve. headless_mode -> ExternalControl via
+            # as well as the *_mode topics resolve. headless_mode ─▶ ExternalControl via
             # resend_robot_program instead of the dashboard play.
             #
             # respawn=True: ur_robot_driver 3.7 (jazzy) has an upstream race in
-            # RobotStateHelper::setModeExecute -> it uses the SHARED current_goal_handle_
+            # RobotStateHelper::setModeExecute ─▶ it uses the SHARED current_goal_handle_
             # (not the local goal_handle parameter) for succeed()/abort(). If a second
             # SetMode goal comes in while the first is still in the wait loop (e.g. a
             # calibration/script prepare and auto_recover at the same time), goal #2
             # overwrites current_goal_handle_; goal #1 then calls succeed() on the already
-            # succeeded goal #2 -> rcl_action "invalid transition from SUCCEEDED with event
-            # SUCCEED" -> std::terminate -> SIGABRT (exit -6). The state change
-            # (POWER_OFF->RUNNING) had already gone through; only the follow-up succeed
-            # crashes the node. Without a respawn the helper stays dead -> the set_mode
-            # action disappears -> every subsequent prepare/recover fails ("set_mode action
+            # succeeded goal #2 ─▶ rcl_action "invalid transition from SUCCEEDED with event
+            # SUCCEED" ─▶ std::terminate ─▶ SIGABRT (exit -6). The state change
+            # (POWER_OFF─▶RUNNING) had already gone through; only the follow-up succeed
+            # crashes the node. Without a respawn the helper stays dead ─▶ the set_mode
+            # action disappears ─▶ every subsequent prepare/recover fails ("set_mode action
             # not available"). The respawn restarts it after about 2 s; the actual trigger
             # (competing goals) is additionally shut off by auto_recover:=false (no more
             # parallel watcher recoveries).
@@ -122,7 +122,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[{"robot_ip": robot_ip, "headless_mode": headless_mode}],
             ),
-            # Thin adapter: the familiar Trigger API -> SetMode action of the helper.
+            # Thin adapter: the familiar Trigger API ─▶ SetMode action of the helper.
             Node(
                 package="ur_state_manager",
                 executable="state_manager",

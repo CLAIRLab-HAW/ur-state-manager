@@ -7,16 +7,16 @@ switch_controller. This node offers one std_srvs/Trigger service per "mode"; a c
 deactivates the other command controllers that are currently active.
 
 Example modes (defaults, overridable by parameter):
-  trajectory        -> arm_0_joint_trajectory_controller   (default; MoveIt/trajectories)
-  freedrive         -> freedrive_mode_controller           (hand guiding / recording)
-  forward_position  -> forward_position_controller         (direct position streams)
-  forward_velocity  -> forward_velocity_controller         (direct velocity streams)
-  passthrough       -> passthrough_trajectory_controller   (trajectory streaming)
+  trajectory        ─▶ arm_0_joint_trajectory_controller   (default; MoveIt/trajectories)
+  freedrive         ─▶ freedrive_mode_controller           (hand guiding / recording)
+  forward_position  ─▶ forward_position_controller         (direct position streams)
+  forward_velocity  ─▶ forward_velocity_controller         (direct velocity streams)
+  passthrough       ─▶ passthrough_trajectory_controller   (trajectory streaming)
 
 Services (in the node namespace, e.g. /a200_0553/manipulators/ur_controller_mode_manager):
-  ~/mode/<name>   (std_srvs/Trigger)  -> switch into this mode
-  ~/release       (std_srvs/Trigger)  -> deactivate all command controllers (arm free)
-  ~/active        (std_srvs/Trigger)  -> report the currently active command controller(s)
+  ~/mode/<name>   (std_srvs/Trigger)  ─▶ switch into this mode
+  ~/release       (std_srvs/Trigger)  ─▶ deactivate all command controllers (arm free)
+  ~/active        (std_srvs/Trigger)  ─▶ report the currently active command controller(s)
 
 Broadcasters (joint_state_broadcaster, io_and_status_controller, ft/tcp/speed_scaling) are NOT part of the exclusive
 group and stay active untouched.
@@ -40,11 +40,11 @@ class ControllerModeManager(Node):
     def __init__(self):
         super().__init__("ur_controller_mode_manager")
 
-        # controller_manager relative -> resolves inside the node namespace
+        # controller_manager relative ─▶ resolves inside the node namespace
         cm = self.declare_parameter("controller_manager", "controller_manager").value
         cm = cm.rstrip("/")
 
-        # Parallel arrays: mode name -> controller name. Same length.
+        # Parallel arrays: mode name ─▶ controller name. Same length.
         self.mode_names = list(
             self.declare_parameter(
                 "mode_names", ["trajectory", "freedrive", "forward_position", "forward_velocity", "passthrough"]
