@@ -13,6 +13,11 @@ the versioning [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **A GitHub workflow** (`.github/workflows/ci.yml`): pytest over `readiness.py` and `switching.py`, plus ruff for
+  hard errors only. Standalone — those two modules import neither ROS nor any sibling repo, so nothing else is
+  checked out and `pytest` is the only named dependency. `colcon test` is not run: the package declares no ament
+  linters, so it would build a ROS workspace to execute nothing.
+
 - **The readiness and controller-switch decisions are now ROS-free modules with a test suite** (`readiness.py`,
   `switching.py`). They previously sat inside `Node` methods that call service clients, so the cases that decide
   whether the node reaches for the real UR5 were only reachable by provoking them on the a200-0553: emergency stop,

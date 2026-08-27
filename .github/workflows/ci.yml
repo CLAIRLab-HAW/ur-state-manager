@@ -1,0 +1,36 @@
+# CI: pytest + ruff (hard errors only).  Standalone -- the suite covers `readiness.py` and `switching.py`, which
+# import neither ROS nor any sibling repo, so nothing is checked out beside this repo and no `workspace.repos`
+# marker is created.
+#
+# The suite is deliberately the ROS-free half of this package: `state_manager.py` and `controller_mode_manager.py`
+# need rclpy, ur_dashboard_msgs and controller_manager_msgs, none of which exist outside a ROS 2 Jazzy image, so a
+# runner could never import them.  What it does cover are the decisions that are otherwise reachable only by
+# provoking them on the real a200-0553 -- emergency stop, protective stop, safety violation, an arm powered on with
+# ExternalControl paused.
+#
+# `colcon test` is NOT run: the package declares no ament linters (see rg6_control's CMakeLists for the same
+# decision), so it would build a ROS workspace to execute nothing.
+#
+# No `black --check` either: without `--config` pointing at the workspace root pyproject.toml Black takes its own
+# default of 88 instead of the workspace's line-length 120 and reports the whole tree unformatted (same reason the
+# pre-commit hook passes --config explicitly).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # No pyproject.toml here, deliberately (CLAUDE.md: uv would take this repo for the workspace root and run
+      # against the system interpreter), so the dependency is named rather than resolved.  pytest is the only one --
+      # tests/conftest.py puts src/ur_state_manager on sys.path instead of installing anything.
+      - run: pip install pytest ruff
+      - run: ruff check --select E9,F63,F7,F82 .
+      - run: python -m pytest tests -q
