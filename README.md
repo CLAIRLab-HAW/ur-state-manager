@@ -247,9 +247,20 @@ For the workspace to be found, it must be listed under
 
 ## Running Tests
 
+The suite covers the decisions that would otherwise only be reachable on the real arm — emergency stop, protective
+stop, safety violation, an arm powered on with ExternalControl paused, and which controller has to go off before the
+next one comes on. They live in `readiness.py` and `switching.py`, which import no ROS at all, so the tests run on any
+machine:
+
 ```bash
-colcon test --packages-select ur_state_manager
+uv run pytest robot/ur-state-manager        # from the workspace root
 ```
+
+They also come along in the plain root run (`uv run pytest`), which collects them by path — this package is not a
+`uv` workspace member and deliberately has no `pyproject.toml` (see `tests/conftest.py`).
+
+`colcon test --packages-select ur_state_manager` runs nothing: the package declares no ament linters, because the
+workspace formats with black and runs no other linter.
 
 ## Related
 

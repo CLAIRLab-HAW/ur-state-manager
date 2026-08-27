@@ -13,6 +13,27 @@ the versioning [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **The readiness and controller-switch decisions are now ROS-free modules with a test suite** (`readiness.py`,
+  `switching.py`). They previously sat inside `Node` methods that call service clients, so the cases that decide
+  whether the node reaches for the real UR5 were only reachable by provoking them on the a200-0553: emergency stop,
+  protective stop, safety violation, an arm powered on with ExternalControl paused, and a `switch_controller` plan
+  that has to clear the incumbent claimant first. 47 tests now walk through them on any machine — the modules import
+  neither `rclpy` nor `ur_dashboard_msgs`, which is installed on the robot and in none of the offboard images. They
+  take mode NAMES rather than the message integers, so the `ROBOT_MODE_NAMES`/`SAFETY_MODE_NAMES` tables stay the one
+  bridge to the message package instead of a second copy of its constants.
+
+  Two behaviour changes fell out of it. `_verify_ready` now distinguishes "a fresh bring-up can heal this"
+  (`retryable`) from "looking again will not change it" (`settled`), which were conflated in one flag before; the
+  polling loop reads the second, the retry loop the first. And `_already_ready` and `_verify_ready` share one
+  readiness predicate and one state description — they carried two copies of the `NORMAL`/`REDUCED` tuple and two
+  slightly different detail formats.
+
+- **`ament_copyright`, `ament_flake8` and `ament_pep257` are no longer declared as `test_depend`.** The package never
+  had the `test/` directory that would run them, and the workspace formats with black and configures no other linter;
+  `ament_flake8` would have brought a second one at 99 columns against the workspace's 120, and `ament_pep257`
+  docstring conventions against its plain-reStructuredText norm.
+
+
 - **`auto_recover:=false` had no effect at all -- the launch file never passed the switch on.** The node declares
   `auto_recover` (default `True`), `auto_recover_period` and `auto_recover_settle` as its own parameters, and the
   README listed all three as launch arguments, but `ur_state_manager.launch.py` neither declared them nor put them

@@ -35,6 +35,8 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 from controller_manager_msgs.srv import ListControllers, SwitchController
 
+from .switching import DEFAULT_MODE_CONTROLLERS, DEFAULT_MODE_NAMES, build_mode_map, plan_switch
+
 
 class ControllerModeManager(Node):
     def __init__(self):
@@ -44,33 +46,15 @@ class ControllerModeManager(Node):
         cm = self.declare_parameter("controller_manager", "controller_manager").value
         cm = cm.rstrip("/")
 
-        # Parallel arrays: mode name ─▶ controller name. Same length.
-        self.mode_names = list(
-            self.declare_parameter(
-                "mode_names", ["trajectory", "freedrive", "forward_position", "forward_velocity", "passthrough"]
-            ).value
-        )
-        self.mode_controllers = list(
-            self.declare_parameter(
-                "mode_controllers",
-                [
-                    "arm_0_joint_trajectory_controller",
-                    "freedrive_mode_controller",
-                    "forward_position_controller",
-                    "forward_velocity_controller",
-                    "passthrough_trajectory_controller",
-                ],
-            ).value
-        )
+        # Parallel arrays: mode name ─▶ controller name. Same length (ROS 2 parameters have no dict type).
+        self.mode_names = list(self.declare_parameter("mode_names", list(DEFAULT_MODE_NAMES)).value)
+        self.mode_controllers = list(self.declare_parameter("mode_controllers", list(DEFAULT_MODE_CONTROLLERS)).value)
 
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
 
-        if len(self.mode_names) != len(self.mode_controllers):
-            raise ValueError("mode_names and mode_controllers must be the same length")
-
-        # The exclusive group = all mapped command controllers.
-        self.exclusive = list(dict.fromkeys(self.mode_controllers))
-        self.mode_to_controller = dict(zip(self.mode_names, self.mode_controllers))
+        # Raises on a length mismatch: silently zipping would drop the trailing modes, and the node would answer
+        # 'Unknown mode' for them from then on.  The exclusive group = all mapped command controllers.
+        self.mode_to_controller, self.exclusive = build_mode_map(self.mode_names, self.mode_controllers)
 
         self.cbg = ReentrantCallbackGroup()
         self._lock = threading.Lock()
@@ -106,9 +90,8 @@ class ControllerModeManager(Node):
             return None
         res = fut.result()
         active = {c.name for c in res.controller if c.state == "active"}
-        loaded = {c.name for c in res.controller}
         # Remember what is loaded at all (for meaningful error messages).
-        self._loaded = loaded
+        self._loaded = {c.name for c in res.controller}
         return [c for c in self.exclusive if c in active]
 
     def _switch(self, activate, deactivate):
@@ -127,21 +110,23 @@ class ControllerModeManager(Node):
 
     # ---- sequence -----------------------------------------------------------
     def set_mode(self, mode):
-        controller = self.mode_to_controller.get(mode)
-        if controller is None:
-            return False, f"Unknown mode '{mode}'"
+        # Cheap guard first: an unknown mode is a caller error and needs no round trip to the controller_manager --
+        # if that one is down as well, 'list_controllers failed' would hide the actual cause.  The message still
+        # comes from plan_switch, so there is only one wording of it.
+        if mode not in self.mode_to_controller:
+            return False, plan_switch(mode, self.mode_to_controller, self.exclusive, (), ()).refusal
         self._loaded = set()
         active = self._active_command_controllers()
         if active is None:
             return False, "list_controllers failed (controller_manager reachable?)"
-        if controller not in getattr(self, "_loaded", set()):
-            return False, f"Controller '{controller}' is not loaded - load it first via arm_controllers.launch.py"
-        deactivate = [c for c in active if c != controller]
-        activate = [] if controller in active else [controller]
-        if not activate and not deactivate:
+        plan = plan_switch(mode, self.mode_to_controller, self.exclusive, active, self._loaded)
+        if plan.refusal is not None:
+            return False, plan.refusal
+        controller = self.mode_to_controller[mode]
+        if plan.is_noop:
             return True, f"Mode '{mode}' ({controller}) already active"
-        self.get_logger().info(f"Mode '{mode}': activate={activate} deactivate={deactivate}")
-        ok, msg = self._switch(activate, deactivate)
+        self.get_logger().info(f"Mode '{mode}': activate={list(plan.activate)} deactivate={list(plan.deactivate)}")
+        ok, msg = self._switch(list(plan.activate), list(plan.deactivate))
         if not ok:
             return False, f"Switching to '{mode}' failed: {msg}"
         return True, f"Mode '{mode}' active ({controller})"
