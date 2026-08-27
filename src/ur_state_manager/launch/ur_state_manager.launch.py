@@ -26,6 +26,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 NS = "/a200_0553/manipulators"
@@ -38,6 +39,9 @@ def generate_launch_description():
     start_dashboard_client = LaunchConfiguration("start_dashboard_client")
     robot_ip = LaunchConfiguration("robot_ip")
     load_arm_controllers = LaunchConfiguration("load_arm_controllers")
+    auto_recover = LaunchConfiguration("auto_recover")
+    auto_recover_period = LaunchConfiguration("auto_recover_period")
+    auto_recover_settle = LaunchConfiguration("auto_recover_settle")
 
     return LaunchDescription(
         [
@@ -68,6 +72,28 @@ def generate_launch_description():
                 default_value="true",
                 description="arm_controllers.launch.py (extra controller + mode manager). Deliberately here and not in "
                 "its own systemd unit: same workspace, same user, same dependencies and identical lifecycle.",
+            ),
+            # The watcher of the state_manager.  These three have to be DECLARED here and handed to the node below,
+            # otherwise `ros2 launch ... auto_recover:=false` is swallowed without a word and the node keeps its own
+            # default (True).  Measured on 2026-08-27 at the robot: the unit starts with `auto_recover:=false`, and
+            # `ros2 param get .../ur_state_manager auto_recover` still answered `True` -- six seconds after a bare
+            # `dashboard_client/power_on` the watcher took the arm from IDLE to RUNNING, released the brakes and
+            # started ExternalControl.  Nobody had asked for that.
+            DeclareLaunchArgument(
+                "auto_recover",
+                default_value="true",
+                description="Watcher that runs 'recover' by itself after a late power-on. false -> the arm stays "
+                "where the operator put it (no brake release, no ExternalControl).",
+            ),
+            DeclareLaunchArgument(
+                "auto_recover_period",
+                default_value="5.0",
+                description="Check interval of the auto-recovery watcher (s).",
+            ),
+            DeclareLaunchArgument(
+                "auto_recover_settle",
+                default_value="2",
+                description="This many consistent 'must recover' observations before the watcher acts.",
             ),
             # Extra controllers + mode manager. NOT doable via robot.yaml: Clearpath's spawn loop
             # (clearpath_manipulators/launch/control.launch.py) spawns every control.yaml node whose NAME contains
@@ -129,7 +155,18 @@ def generate_launch_description():
                 name="ur_state_manager",
                 namespace=NS,
                 output="screen",
-                parameters=[{"set_mode_action": f"{NS}/ur_robot_state_helper/set_mode", "dashboard_ns": dashboard_ns}],
+                # ParameterValue with an explicit value_type: a LaunchConfiguration yields a STRING, and
+                # `bool("false")` is True in Python -- passing it raw would leave the switch just as dead as not
+                # passing it at all, only harder to see.
+                parameters=[
+                    {
+                        "set_mode_action": f"{NS}/ur_robot_state_helper/set_mode",
+                        "dashboard_ns": dashboard_ns,
+                        "auto_recover": ParameterValue(auto_recover, value_type=bool),
+                        "auto_recover_period": ParameterValue(auto_recover_period, value_type=float),
+                        "auto_recover_settle": ParameterValue(auto_recover_settle, value_type=int),
+                    }
+                ],
             ),
         ]
     )

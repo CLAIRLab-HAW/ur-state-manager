@@ -13,6 +13,17 @@ the versioning [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **`auto_recover:=false` had no effect at all -- the launch file never passed the switch on.** The node declares
+  `auto_recover` (default `True`), `auto_recover_period` and `auto_recover_settle` as its own parameters, and the
+  README listed all three as launch arguments, but `ur_state_manager.launch.py` neither declared them nor put them
+  into the node's `parameters=`; `ros2 launch ... auto_recover:=false` was swallowed silently. Measured on
+  2026-08-27 at the a200-0553, whose unit starts with exactly that argument: `ros2 param get
+  .../ur_state_manager auto_recover` answered `True`, and six seconds after a bare `dashboard_client/power_on` the
+  watcher took the arm from `IDLE` to `RUNNING`, released the brakes and started ExternalControl -- the very thing
+  the wrapper's own comment says it switches off. The three arguments are now declared and handed over as
+  `ParameterValue(..., value_type=...)`; the explicit type matters, because a `LaunchConfiguration` yields a string
+  and `bool("false")` is `True`.
+
 - **The package is now English throughout the interpreter-visible layer** -- the remaining German log lines, `Trigger`
   response messages, launch-argument descriptions and the `setup.py` description follow the comments and docstrings
   that were pulled along earlier. What a caller receives from `~/prepare`/`~/recover`/`~/ensure_ready`/`~/power_off`
