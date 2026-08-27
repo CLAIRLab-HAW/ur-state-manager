@@ -70,6 +70,8 @@ from ur_dashboard_msgs.action import SetMode
 from ur_dashboard_msgs.msg import RobotMode, SafetyMode
 from ur_dashboard_msgs.srv import GetRobotMode, GetSafetyMode, IsProgramRunning
 
+from .readiness import classify_ready, describe_state, is_ready, needs_recover
+
 # Human-readable names for log output (the constants come from the .msg files).
 ROBOT_MODE_NAMES = {
     RobotMode.NO_CONTROLLER: "NO_CONTROLLER",
@@ -100,11 +102,18 @@ SAFETY_MODE_NAMES = {
 
 
 def _robot_mode_name(mode):
-    return ROBOT_MODE_NAMES.get(mode, f"UNKNOWN({mode})")
+    """Mode number -> name.  ``None`` (nothing readable) passes through as ``None``, not as ``UNKNOWN(None)``.
+
+    These two tables are the only bridge between the ``ur_dashboard_msgs`` integers and the mode names that
+    ``readiness`` decides on -- which is why they pass a missing reading through untouched instead of coining a name
+    for it: "not readable" is a different answer from "a mode I do not know", and only the second one is a
+    ``UNKNOWN(n)``."""
+    return None if mode is None else ROBOT_MODE_NAMES.get(mode, f"UNKNOWN({mode})")
 
 
 def _safety_mode_name(mode):
-    return SAFETY_MODE_NAMES.get(mode, f"UNKNOWN({mode})")
+    """Safety mode number -> name; ``None`` passes through.  See ``_robot_mode_name``."""
+    return None if mode is None else SAFETY_MODE_NAMES.get(mode, f"UNKNOWN({mode})")
 
 
 class StateManager(Node):
@@ -278,24 +287,31 @@ class StateManager(Node):
             return None
         return bool(res.program_running)
 
+    def _read_state(self):
+        """The triple every decision runs on: robot mode NAME, safety mode NAME, ExternalControl status.
+
+        Each element is ``None`` when it could not be read -- the dashboard did not answer, or the latched topic
+        never reached this late joiner.  ``readiness`` treats that as "not known", never as a fourth mode."""
+        return (
+            _robot_mode_name(self._get_robot_mode()),
+            _safety_mode_name(self._get_safety_mode()),
+            self._effective_program_running(),
+        )
+
     def _already_ready(self):
         """Idempotence check for prepare: is the arm already in service
         (RUNNING + safety NORMAL/REDUCED + ExternalControl active), so that NO
         mode change and hence no robot_state_helper is needed? ─▶ bool."""
-        robot_mode = self._get_robot_mode()
-        safety = self._get_safety_mode()
-        prog = self._effective_program_running()
-        if robot_mode == RobotMode.RUNNING and safety in (SafetyMode.NORMAL, SafetyMode.REDUCED) and prog is True:
+        robot_mode, safety, prog = self._read_state()
+        if is_ready(robot_mode, safety, prog):
             self.get_logger().info(
                 "prepare: arm already RUNNING + ExternalControl active "
                 "─▶ no mode change needed (robot_state_helper not required)."
             )
             return True
         self.get_logger().info(
-            "prepare: not ready straight away (robot_mode="
-            f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unknown'}, "
-            f"safety={_safety_mode_name(safety) if safety is not None else 'unknown'}, "
-            f"program_running={prog}) ─▶ delegating to robot_state_helper."
+            f"prepare: not ready straight away ({describe_state(robot_mode, safety, prog)}) "
+            "─▶ delegating to robot_state_helper."
         )
         return False
 
@@ -426,35 +442,19 @@ class StateManager(Node):
         log = self.get_logger().info if res.success else self.get_logger().warn
         log(f"controller release before the mode cycle: {res.message}")
 
-    _GOOD_SAFETY = (SafetyMode.NORMAL, SafetyMode.REDUCED)
-    _TERMINAL_SAFETY = (SafetyMode.SYSTEM_EMERGENCY_STOP, SafetyMode.ROBOT_EMERGENCY_STOP)
-
     def _verify_ready(self, timeout):
         """After a 'successful' SetMode, check whether the arm is REALLY ready.
 
         robot_state_helper reports success as soon as RUNNING is reached and play/resend has been sent - a protective
-        stop that falls DURING the bring-up (CB3 brake release, module docstring) slips through that gap. Here:
-        RUNNING + safety NORMAL/REDUCED + ExternalControl running, polled until ``timeout``; a p-stop/FAULT/VIOLATION
-        aborts immediately (a retry heals it), an E-stop aborts for good. ─▶ (ok, detail, retryable)."""
+        stop that falls DURING the bring-up (CB3 brake release, module docstring) slips through that gap.  This is
+        the polling around ``readiness.classify_ready``: a p-stop/FAULT/VIOLATION aborts the wait at once (a retry
+        heals it, so there is nothing to gain from waiting the timeout out), an E-stop aborts for good.
+        ─▶ (ok, detail, retryable)."""
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
-            robot_mode = self._get_robot_mode()
-            safety = self._get_safety_mode()
-            prog = self._effective_program_running()
-            if robot_mode == RobotMode.RUNNING and safety in self._GOOD_SAFETY and prog is True:
-                return True, "", True
-            detail = (
-                "robot_mode="
-                f"{_robot_mode_name(robot_mode) if robot_mode is not None else 'unknown'} "
-                f"safety={_safety_mode_name(safety) if safety is not None else 'unknown'} "
-                f"program_running={prog}"
-            )
-            if safety in self._TERMINAL_SAFETY:
-                return False, f"{detail} (E-stop: can only be released manually)", False
-            if safety in (SafetyMode.PROTECTIVE_STOP, SafetyMode.VIOLATION, SafetyMode.FAULT):
-                return False, detail, True
-            if time.monotonic() >= deadline:
-                return False, detail, True
+            verdict = classify_ready(*self._read_state())
+            if verdict.settled or time.monotonic() >= deadline:
+                return verdict.ok, verdict.detail, verdict.retryable
             self._sleep(0.5)
 
     def _bringup(self, stop_program_first):
@@ -530,10 +530,12 @@ class StateManager(Node):
         robot_program_running=False. POWER_OFF / DISCONNECTED / BOOTING (arm deliberately off, or still booting) and
         BACKDRIVE (freedrive) are NOT touched. An unknown program status (None, even after the dashboard fallback) ─▶
         do not act (the safe default)."""
-        if self._effective_program_running() is not False:
+        # Read the program status first and short-circuit on it: it is the cheaper of the two, and when it already
+        # rules recovery out there is no reason to spend a second dashboard round trip on the robot mode.
+        prog = self._effective_program_running()
+        if prog is not False:
             return False  # already running, or the status is still unknown
-        mode = self._get_robot_mode()
-        return mode in (RobotMode.POWER_ON, RobotMode.IDLE, RobotMode.RUNNING)
+        return needs_recover(_robot_mode_name(self._get_robot_mode()), prog)
 
     def _auto_recover_tick(self):
         # Is a prepare/recover already running (manual OR automatic)? ─▶ do not butt in.
