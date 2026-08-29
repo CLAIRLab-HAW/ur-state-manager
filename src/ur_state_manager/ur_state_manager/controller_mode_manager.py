@@ -28,12 +28,11 @@ arm_controllers.launch.py / config/extra_controllers.yaml.
 import threading
 
 import rclpy
+from controller_manager_msgs.srv import ListControllers, SwitchController
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-
 from std_srvs.srv import Trigger
-from controller_manager_msgs.srv import ListControllers, SwitchController
 
 from .switching import DEFAULT_MODE_CONTROLLERS, DEFAULT_MODE_NAMES, build_mode_map, plan_switch
 

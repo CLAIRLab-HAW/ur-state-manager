@@ -63,7 +63,6 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 from ur_dashboard_msgs.action import SetMode

@@ -11,7 +11,6 @@ Pure set arithmetic, so it needs neither ROS nor a running arm.
 from __future__ import annotations
 
 import pytest
-
 from ur_state_manager.switching import DEFAULT_MODE_CONTROLLERS, DEFAULT_MODE_NAMES, build_mode_map, plan_switch
 
 TRAJECTORY = "arm_0_joint_trajectory_controller"

@@ -12,7 +12,6 @@ already uses for its log lines.
 from __future__ import annotations
 
 import pytest
-
 from ur_state_manager.readiness import (
     GOOD_SAFETY,
     POWERED_MODES,
