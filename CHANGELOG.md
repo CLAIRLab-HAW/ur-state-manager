@@ -7,6 +7,12 @@ how it embeds into the onboard stack in
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 the versioning [Semantic Versioning](https://semver.org/).
 
+## 2026-08-30 (ruff resolves the same settings from anywhere)
+
+- **CI pins `ruff>=0.16.5,<0.17`** -- the minor the lint scope was measured against, the same bound the
+  workspace dev group carries. Unpinned, a ruff release can stabilise new rules and turn this CI red without
+  a commit of ours.
+
 ## 2026-08-24 (.gitignore normalised to the workspace base)
 
 - **`.gitignore` now uses the workspace's lean 8-line base** (`__pycache__/`, `*.py[cod]`, `*.egg-info/`, `build/`, `dist/`, `.venv/`, `.pytest_cache/`, `.DS_Store`); replaces the ~280-line auto-generated toptal.com template (Django/Flask/C/C++ patterns this package never produces). ROS extras: `install/`, `log/`, `*.pcd`, `COLCON_IGNORE`, `AMENT_IGNORE`.

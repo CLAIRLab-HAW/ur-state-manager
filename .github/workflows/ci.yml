@@ -31,6 +31,8 @@ jobs:
       # No pyproject.toml here, deliberately (CLAUDE.md: uv would take this repo for the workspace root and run
       # against the system interpreter), so the dependency is named rather than resolved.  pytest is the only one --
       # tests/conftest.py puts src/ur_state_manager on sys.path instead of installing anything.
-      - run: pip install pytest ruff
+      # ruff is pinned to the minor the lint scope was measured against (same bound as the workspace dev
+      # group): an unpinned install lets a ruff release stabilise new rules and turn this CI red with no commit.
+      - run: pip install pytest 'ruff>=0.16.5,<0.17'
       - run: ruff check --select E9,F63,F7,F82 .
       - run: python -m pytest tests -q
