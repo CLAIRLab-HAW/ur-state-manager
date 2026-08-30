@@ -355,7 +355,7 @@ class StateManager(Node):
         """Send a SetMode goal and wait synchronously for the result. ─▶ (ok, msg)."""
         if not self.cli_set_mode.wait_for_server(timeout_sec=self.service_timeout):
             return False, (
-                "robot_state_helper/set_mode action not available - " "is the ur_robot_state_helper node running?"
+                "robot_state_helper/set_mode action not available - is the ur_robot_state_helper node running?"
             )
         self._prime_state_helper()
 
@@ -364,7 +364,7 @@ class StateManager(Node):
         goal.stop_program = stop_program
         goal.play_program = play_program
         self.get_logger().info(
-            f"SetMode ─▶ target={_robot_mode_name(target)} " f"stop_program={stop_program} play_program={play_program}"
+            f"SetMode ─▶ target={_robot_mode_name(target)} stop_program={stop_program} play_program={play_program}"
         )
 
         send_fut = self.cli_set_mode.send_goal_async(goal, feedback_callback=self._on_feedback)

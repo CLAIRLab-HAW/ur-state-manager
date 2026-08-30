@@ -72,7 +72,7 @@ class ControllerModeManager(Node):
         self.create_service(Trigger, "~/release", self._srv_release, callback_group=self.cbg)
         self.create_service(Trigger, "~/active", self._srv_active, callback_group=self.cbg)
 
-        self.get_logger().info(f"ur_controller_mode_manager ready. cm={cm} " f"modes={', '.join(self.mode_names)}")
+        self.get_logger().info(f"ur_controller_mode_manager ready. cm={cm} modes={', '.join(self.mode_names)}")
 
     # ---- low level ----------------------------------------------------------
     def _spin_future(self, future, timeout):
