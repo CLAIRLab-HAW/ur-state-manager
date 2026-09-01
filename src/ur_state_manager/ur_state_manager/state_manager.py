@@ -590,7 +590,7 @@ class StateManager(Node):
         return self._run_locked(self.power_off, response)
 
 
-def main():
+def main() -> None:
     rclpy.init()
     node = StateManager()
     executor = MultiThreadedExecutor()
@@ -606,4 +606,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

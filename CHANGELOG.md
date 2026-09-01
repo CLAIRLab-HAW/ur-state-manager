@@ -7,6 +7,17 @@ how it embeds into the onboard stack in
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 the versioning [Semantic Versioning](https://semver.org/).
 
+## 2026-09-02 (one shape for the `__main__` block)
+
+- **`if __name__ == "__main__":` now ends in `raise SystemExit(main())`** -- the single form the workspace
+  settled on across its 97 entry points (rule and reasoning in `.claude/rules/code-style.md`). It needs no
+  `import sys`, carries a `main` returning `int` and one returning `None` alike (`SystemExit(None)` is exit
+  code 0), and matches the wrapper setuptools generates for `[project.scripts]`, so running the file, running
+  `python -m`, and the installed console command now agree on the exit code.
+- **Both nodes follow, ament template or not.** `ros2 run` reaches them through the console-script wrapper,
+  which is `sys.exit(main())` -- so the bare call was the odd one out, not the safe one. Their `main` is
+  annotated `-> None`, which is what an rclpy node returns.
+
 ## 2026-08-30 (ruff resolves the same settings from anywhere)
 
 - **CI pins `ruff>=0.16.5,<0.17`** -- the minor the lint scope was measured against, the same bound the

@@ -173,7 +173,7 @@ class ControllerModeManager(Node):
         return response
 
 
-def main():
+def main() -> None:
     rclpy.init()
     node = ControllerModeManager()
     executor = MultiThreadedExecutor()
@@ -189,4 +189,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
